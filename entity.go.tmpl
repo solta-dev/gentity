@@ -1,33 +1,60 @@
 /********************************
  * {{ .GoName }} {{- $allFields := .Fields }} {{ if .AutoIncrementField }}autoincrement: {{ .AutoIncrementField }}{{ end }}
 {{- range $i, $f := .Fields }}
- * 	{{ $f.GoName}} {{ $f.GoType }} {{ $f.SQLName }} {{ if $f.InPrimaryKey }} <primary> {{ end }}
+ * 	{{ $f.GoName}} {{ $f.GoType }} {{ $f.SQLName }} {{ if $f.InPrimaryKey }} <primary> {{ end }} {{ if and ($.AutoIncrementField) (eq $f.GoName $.AutoIncrementField.GoName) }} <autoincrement {{ end }}
 {{- end }}
 {{ if .PrimaryIndex }} * Primary index: {{ .PrimaryIndex }}{{ end }}
 {{- if len .UniqIndexes }}
  * Unique indexes: {{ range $n, $idx := .UniqIndexes }}
- *  {{ $n }}: {{ range $i, $f := $idx }}{{ $f.SQLName }}{{ if is_last $i $idx | not }}, {{ end }}{{ end }}
+ *  {{ $n }}: {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}
  {{- end }}
 {{- end }}
 {{- if len .NonUniqIndexes }}
  * Non unique indexes: {{ range $n, $idx := .NonUniqIndexes }}
- *  {{ $n }}: {{ range $i, $f := $idx }}{{ $f.SQLName }}{{ if is_last $i $idx | not }}, {{ end }}{{ end }}
+ *  {{ $n }}: {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}
  {{- end }}
 {{- end }}
  ********************************/
 
-func (e *{{ .GoName }}) Insert(ctx context.Context) (err error) {
+func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+    var sql, returning string
+    var args []any
 
-	sql := `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ $f.SQLName }}{{ if is_last $i $allFields | not }}, {{ end }}{{ end }}) 
-	VALUES ({{ range $i, $f := .Fields }}${{ add $i 1 }}{{ if is_last $i $allFields | not }}, {{ end }}{{ end }})`
-	// TODO: {{ if .AutoIncrementField }}RETURNING {{ .AutoIncrementField.SQLName }}{{ end }}
+    {{ if .AutoIncrementField }}if e.{{ .AutoIncrementField.GoName }} == 0 {
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
+        VALUES ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+        returning = ` RETURNING .AutoIncrementField.SQLName`
+        args = []any{ {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+    } else {
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
+        VALUES ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+        args = []any{ {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+    }{{ else }}
+    sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
+    VALUES ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+    args = []any{ {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+    {{ end }}
+
+    var returnAndUpdateVals bool
+	for _, opt := range insertOptions {
+		if opt.ReturnAndUpdateVals {
+			returnAndUpdateVals = true
+		}
+		if opt.OnConflictStatement != "" {
+			sql += " ON CONFLICT "+ opt.OnConflictStatement
+		}
+	}
+    
+    if returnAndUpdateVals {
+        returning = ` RETURNING {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}`
+    }
+    if returning != "" {
+        sql += returning
+    }
+
 	var rows pgx.Rows
-	rows, err = pgconn.Query(
-		ctx,
-		sql,
-		{{ range $f := .Fields }}e.{{ $f.GoName }}, {{ end }}
-	)
+	rows, err = pgconn.Query(ctx, sql, args...)
 	defer func(){
 		rows.Close()
 		if err == nil {
@@ -37,20 +64,30 @@ func (e *{{ .GoName }}) Insert(ctx context.Context) (err error) {
 			err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
 		}
 	}()
-	
 
-	{{ if .AutoIncrementField }} // Fill auto id
+    if returnAndUpdateVals {
 		if ! rows.Next() {
-			return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
-		}
+            // TODO: on conflict do nothing case
+            return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
+        }
 
-		vals, err := rows.Values()
-		if err != nil {
-			return err
-		}
+        if err = rows.Scan(
+			{{- range $i, $f := .Fields }}
+			&e.{{ $f.GoName }},
+			{{- end }}
+		); err != nil {
+            return
+        }
+    }{{ if .AutoIncrementField }} else if e.{{ .AutoIncrementField.GoName }} == 0 {
+        if ! rows.Next() {
+            // TODO: on conflict do nothing case
+            return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
+        }
 
-		e.{{ .AutoIncrementField.GoName }} = vals[{{ .AutoIncrementField.Num }}].({{ .AutoIncrementField.GoType }})
-	{{ end }}
+        if err = rows.Scan(&e.{{ .AutoIncrementField.GoName }}); err != nil {
+            return
+        }
+    }{{ end }}
 
 	return nil
 }
@@ -61,14 +98,9 @@ func (e *{{ .GoName }}) Insert(ctx context.Context) (err error) {
 func (e *{{ .GoName }}) Update(ctx context.Context) (err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
 
-	sql := `UPDATE "{{ .SQLName }}"
-	SET {{ range $i, $f := .Fields }}{{ if $f.InPrimaryKey | not }}{{ $f.SQLName }} = ${{ add $i 1 }}{{ if is_last $i $allFields | not }}, {{ end }}{{ end }}{{ end }}
-	WHERE {{ range $i, $f := $primaryIndex }}
-		{{- $f.SQLName }} = ${{ add $i 1 }}
-		{{- if is_last $i $primaryIndex | not }} AND {{ end }}
-	{{- end }}`
+	sql := `UPDATE "{{ .SQLName }}" SET {{ range $i, $f := .FieldsExcludePrimaryKey }}{{ if $i }}, {{ end }}{{ $f.SQLName }} = ${{ add $i 1 }}{{ end }}	WHERE {{ range $i, $f := $primaryIndex }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i (len $.FieldsExcludePrimaryKey) }}{{ end }}`
 	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, {{ range $i, $f := .Fields }}e.{{ $f.GoName }}{{ if is_last $i $allFields | not }}, {{ end }}{{ end }});
+	rows, err = pgconn.Query(ctx, sql, {{ range $i, $f := .FieldsExcludePrimaryKey }}e.{{ $f.GoName }}, {{ end }}{{ range $i, $f := $primaryIndex }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }});
 	defer func(){
 		rows.Close()
 		if err == nil {
@@ -85,11 +117,7 @@ func (e *{{ .GoName }}) Update(ctx context.Context) (err error) {
 func (e *{{ .GoName }}) Delete(ctx context.Context) (err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
 
-	sql := `DELETE FROM "{{ .SQLName }}"
-	WHERE {{ range $i, $f := $primaryIndex }}
-		{{- $f.SQLName }} = ${{ add $f.Num 1 }}
-		{{- if is_last $i $primaryIndex | not }} AND {{ end }}
-	{{- end }}`
+	sql := `DELETE FROM "{{ .SQLName }}" WHERE {{ range $i, $f := $primaryIndex }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add $f.Num 1 }}{{ end }}`
 	var rows pgx.Rows
 	rows, err = pgconn.Query(
 		ctx,
@@ -113,11 +141,19 @@ func (e *{{ .GoName }}) Delete(ctx context.Context) (err error) {
 // TODO: func (es []*{{ .GoName }}) Delete(ctx context.Context) (err error) {}
 
 func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interface{}) (entities []{{ .GoName }}, err error) {
+
+    return {{ .GoName }}{}.Query(
+        ctx,
+        `SELECT {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}
+	    FROM "{{ .SQLName }}"
+	    WHERE ` + condition,
+        values,
+    )
+}
+
+func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}) (entities []{{ .GoName }}, err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
 
-	sql := `SELECT {{ range $i, $f := .Fields }}{{ $f.SQLName }}{{ if is_last $i $allFields | not }}, {{ end }}{{ end }}
-	FROM "{{ .SQLName }}"
-	WHERE ` + condition
 	var rows pgx.Rows
 	rows, err = pgconn.Query(
 		ctx,
@@ -130,7 +166,7 @@ func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interf
 			err = rows.Err()
 		}
 		if err != nil {
-			err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
+			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
 		}
 	}()
 
@@ -138,16 +174,13 @@ func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interf
 
 		e := {{ .GoName }}{}
 
-		rows.Scan(
+		if err = rows.Scan(
 			{{- range $i, $f := .Fields }}
 			&e.{{ $f.GoName }},
 			{{- end }}	
-		)
-
-		// values, err := rows.Values()
-		// if err != nil {
-		// 	return nil, err
-		// }
+		); err != nil {
+            return
+        }
 
 		entities = append(entities, e)
 	}
@@ -161,11 +194,11 @@ func (e {{ .GoName }}) GetAll(ctx context.Context) ([]{{ .GoName }}, error) {
 
 {{ if len .UniqIndexes }} {{ $entityGoName := .GoName }}
 	{{- range $n, $idx := .UniqIndexes }}
-func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ if is_last $i $idx | not }}, {{ end }}{{ end }}) (*{{ $entityGoName }}, error) {
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) (*{{ $entityGoName }}, error) {
 	es, err := e.Find(
 		ctx,
-		"{{ range $i, $f := $idx }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ if is_last $i $idx | not }} AND {{ end }}{{ end }}",
-		[]any{ {{ range $i, $f := $idx }}{{ snake_case_to_camel_case $f.SQLName false }}{{ if is_last $i $idx | not }}, {{ end }}{{ end }} },
+		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
+		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },
 	)
 	if err != nil {
 		return nil, err
@@ -177,14 +210,14 @@ func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx con
 	return nil, nil
 }
 
-func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ if is_last $i $idx | not }}, {{ end }}{{ end }}) ([]{{ $entityGoName }}, error) {
+func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) ([]{{ $entityGoName }}, error) {
 	{{ $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
 	var params []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
 
 	where := make([]string, len({{ $firstParam }}))
 	for i := range {{ $firstParam }} {
-		where[i] = "({{ range $i, $f := $idx }}{{ $f.SQLName }} = ${{ $i }}{{ if is_last $i $idx | not }} AND {{ end }}{{ end }})"
-		params = append(params, {{ range $i, $f := $idx }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ if is_last $i $idx | not }}, {{ end }}{{ end }})
+		where[i] = "({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ $f.SQLName }} = ${{ $i }}{{ end }})"
+		params = append(params, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ end }})
 	}
 
 	return e.Find(ctx, strings.Join(where, " OR "), params)
@@ -194,11 +227,11 @@ func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ct
 
 {{if len .NonUniqIndexes }} {{ $entityGoName := .GoName }}
 	{{- range $n, $idx := .NonUniqIndexes }}
-func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ if is_last $i $idx | not }}, {{ end }}{{ end }}) ([]{{ $entityGoName }}, error) {
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) ([]{{ $entityGoName }}, error) {
 	return e.Find(
 		ctx,
-		"{{ range $i, $f := $idx }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ if is_last $i $idx | not }} AND {{ end }}{{ end }}",
-		[]any{ {{ range $i, $f := $idx }}{{ snake_case_to_camel_case $f.SQLName false }}{{ if is_last $i $idx | not }}, {{ end }}{{ end }} },
+		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
+		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },
 	)
 }
 	{{- end }}

@@ -270,8 +270,27 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 		}
 	}
 	if e.PrimaryIndex != "" {
+		e.FieldsExcludePrimaryKey = make([]field, 0, len(e.Fields)-len(e.UniqIndexes[e.PrimaryIndex]))
 		for _, f := range e.UniqIndexes[e.PrimaryIndex] {
 			e.Fields[f.Num].InPrimaryKey = true
+		}
+		for _, f := range e.Fields {
+			if !f.InPrimaryKey {
+				e.FieldsExcludePrimaryKey = append(e.FieldsExcludePrimaryKey, f)
+			}
+		}
+	} else {
+		e.FieldsExcludePrimaryKey = e.Fields
+	}
+
+	if e.AutoIncrementField == nil {
+		e.FieldsExcludeAutoIncrement = e.Fields
+	} else {
+		e.FieldsExcludeAutoIncrement = make([]field, 0, len(e.Fields)-1)
+		for _, f := range e.Fields {
+			if e.AutoIncrementField.GoName != f.GoName {
+				e.FieldsExcludeAutoIncrement = append(e.FieldsExcludeAutoIncrement, f)
+			}
 		}
 	}
 

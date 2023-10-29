@@ -7,10 +7,11 @@ import (
 	"go/token"
 	"log"
 	"os"
-	"reflect"
 	"sort"
 	"strings"
 	"text/template"
+
+	"golang.org/x/exp/maps"
 )
 
 var fileTmpl, entityTmpl *template.Template
@@ -23,9 +24,13 @@ var entityTmplContent []byte
 
 func init() {
 	tmplFuncs := template.FuncMap{
-		"join":                     func(sep string, s []string) string { return strings.Join(s, sep) },
-		"is_last":                  func(x int, a interface{}) bool { return x == reflect.ValueOf(a).Len()-1 },
-		"add":                      func(x int, y int) int { return x + y },
+		"join": func(sep string, s []string) string { return strings.Join(s, sep) },
+		"add": func(x ...int) (y int) {
+			for _, v := range x {
+				y += v
+			}
+			return
+		},
 		"n_tabs":                   func(n int) string { return strings.Repeat("\t", n) },
 		"snake_case_to_camel_case": snakeCaseToCamelCase,
 		"exists":                   func(m map[string]any, key string) bool { _, ok := m[key]; return ok },
@@ -39,6 +44,7 @@ func generate(packageName string, entities []entity) {
 	newFileName := "gentity.gen.go"
 
 	var entitiesCode []string
+	var imports map[string]struct{} = make(map[string]struct{})
 	for _, entity := range entities {
 
 		var buf bytes.Buffer
@@ -47,6 +53,18 @@ func generate(packageName string, entities []entity) {
 		}
 
 		entitiesCode = append(entitiesCode, buf.String())
+
+		for _, field := range entity.Fields {
+			t := strings.Split(field.GoType, ".")
+			if len(t) == 1 {
+				continue
+			}
+			if t[0] == "pgtype" {
+				imports["github.com/jackc/pgx/v5/pgtype"] = struct{}{}
+			} else {
+				imports[t[0]] = struct{}{}
+			}
+		}
 	}
 	sort.Strings(entitiesCode)
 
@@ -54,7 +72,8 @@ func generate(packageName string, entities []entity) {
 	if err := fileTmpl.Execute(&buf, struct {
 		PackageName string
 		Entities    []string
-	}{packageName, entitiesCode}); err != nil {
+		Imports     []string
+	}{packageName, entitiesCode, maps.Keys(imports)}); err != nil {
 		log.Fatalf("Execute template: %v", err)
 	}
 	if _, err := parser.ParseFile(token.NewFileSet(), newFileName, buf.Bytes(), parser.ParseComments); err != nil {
