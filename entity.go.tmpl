@@ -24,7 +24,7 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
     {{ if .AutoIncrementField }}if e.{{ .AutoIncrementField.GoName }} == 0 {
         sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
         VALUES ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
-        returning = ` RETURNING .AutoIncrementField.SQLName`
+        returning = ` RETURNING {{ .AutoIncrementField.SQLName }}`
         args = []any{ {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
     } else {
         sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})

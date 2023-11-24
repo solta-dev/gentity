@@ -30,6 +30,7 @@ All methods expect context in first parameter. And pgx.Conn object under 'pgconn
   a. Before struct: `// gentity`
   b. For each field in unique key specify gentity-tag with it's name: `gentity:"unique=primary_or_something"`
   c. For each field in non-unique key specify gentity-tag with it's name: `gentity:"index=some_index_name"`
+  d. For autoincrement field (if it exists) specify gentity-tag `gentity:"autoincrement"`
 
 ## TODO: or not to do =)
 
