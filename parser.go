@@ -283,6 +283,17 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 		e.FieldsExcludePrimaryKey = e.Fields
 	}
 
+	for name, fields := range e.UniqIndexes {
+		for _, f := range fields {
+			f.InIndexes = append(f.InIndexes, name)
+		}
+	}
+	for name, fields := range e.NonUniqIndexes {
+		for _, f := range fields {
+			f.InIndexes = append(f.InIndexes, name)
+		}
+	}
+
 	if e.AutoIncrementField == nil {
 		e.FieldsExcludeAutoIncrement = e.Fields
 	} else {

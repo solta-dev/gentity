@@ -30,6 +30,7 @@ type field struct {
 	EmbedLevel   int
 	Num          int
 	InPrimaryKey bool
+	InIndexes    []string
 }
 
 func newField() *field {

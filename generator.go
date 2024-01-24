@@ -55,10 +55,17 @@ func generate(packageName string, entities []entity) {
 		entitiesCode = append(entitiesCode, buf.String())
 
 		for _, field := range entity.Fields {
+			// Import field type need only if it used arguments of methods.
+			// This is one case: getters.
+			if len(field.InIndexes) == 0 {
+				continue
+			}
+
 			t := strings.Split(field.GoType, ".")
 			if len(t) == 1 {
 				continue
 			}
+
 			if t[0] == "pgtype" {
 				imports["github.com/jackc/pgx/v5/pgtype"] = struct{}{}
 			} else {
