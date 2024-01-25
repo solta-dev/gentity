@@ -275,9 +275,9 @@ func TestMain(t *testing.T) {
 	}
 
 	esRefs = Tests([]*Test{
-		{ID: 8, IntA: 9, IntB: 9, StrA: "h", TimeA: t1},
-		{ID: 9, IntA: 9, IntB: 9, StrA: "i", TimeA: t1},
-		{ID: 10, IntA: 9, IntB: 9, StrA: "j", TimeA: t1},
+		{ID: 34, IntA: 9, IntB: 9, StrA: "h", TimeA: t1},
+		{ID: 35, IntA: 9, IntB: 9, StrA: "i", TimeA: t1},
+		{ID: 36, IntA: 9, IntB: 9, StrA: "j", TimeA: t1},
 	})
 	if err = esRefs.Insert(ctx); err != nil {
 		t.Error(err)
@@ -290,8 +290,30 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
+	esRefs = Tests([]*Test{
+		{IntA: 11, IntB: 11, StrA: "j", TimeA: t1},
+		{IntA: 11, IntB: 11, StrA: "k", TimeA: t1},
+		{IntA: 11, IntB: 11, StrA: "l", TimeA: t1},
+	})
+	if err = esRefs.Insert(ctx, InsertOption{OnConflictStatement: "DO NOTHING"}); err != nil {
+		t.Error(err)
+	}
+	es, err = Test{}.GetByTestIntAIntB(ctx, 11, 11)
+	if err != nil {
+		t.Error(err)
+	}
+	for i := range es {
+		es[i].ID = 0 // Because of we don't get autoincrement values in multi insert
+	}
+	if diff := deep.Equal(es, []Test{*esRefs[1], *esRefs[2]}); diff != nil {
+		t.Error(diff)
+	}
+
 	// Multi delete
-	esRefs = Tests([]*Test{esRefs[0], esRefs[2]})
+	esRefs = Tests([]*Test{
+		{ID: 34, IntA: 9, IntB: 9, StrA: "h", TimeA: t1},
+		{ID: 36, IntA: 9, IntB: 9, StrA: "j", TimeA: t1},
+	})
 	if err = esRefs.Delete(ctx); err != nil {
 		t.Error(err)
 	}
@@ -299,7 +321,7 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if diff := deep.Equal(es, []Test{{ID: 9, IntA: 9, IntB: 9, StrA: "i", TimeA: t1}}); diff != nil {
+	if diff := deep.Equal(es, []Test{{ID: 35, IntA: 9, IntB: 9, StrA: "i", TimeA: t1}}); diff != nil {
 		t.Error(diff)
 	}
 

@@ -108,7 +108,7 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
 	return nil
 }
 
-func (es Tests) Insert(ctx context.Context) (err error) {
+func (es Tests) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
     var sql string
     var sqlRows []string
@@ -119,9 +119,9 @@ func (es Tests) Insert(ctx context.Context) (err error) {
     }
 
     if es[0].ID == 0 {
-        sql = `INSERT INTO "tests" (int_a, int_b, str_a, time_a) VALUES `
+        sql = `INSERT INTO "tests" (id, int_a, int_b, str_a, time_a) VALUES `
         for i, e := range es {
-            sqlRows = append(sqlRows, fmt.Sprintf(`($%d, $%d, $%d, $%d)`, i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4))
+            sqlRows = append(sqlRows, fmt.Sprintf(`(DEFAULT, $%d, $%d, $%d, $%d)`, i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4))
             args = append(args, e.IntA, e.IntB, e.StrA, e.TimeA)
         }
     } else {
@@ -133,6 +133,16 @@ func (es Tests) Insert(ctx context.Context) (err error) {
     }
 
     sql += strings.Join(sqlRows, ", ")
+
+	for _, opt := range insertOptions {
+		if opt.ReturnAndUpdateVals {
+			err = fmt.Errorf("ReturnAndUpdateVals option is not supported for multi-insert now")
+            return
+		}
+		if opt.OnConflictStatement != "" {
+			sql += " ON CONFLICT "+ opt.OnConflictStatement
+		}
+	}
 
 	var rows pgx.Rows
 	rows, err = pgconn.Query(ctx, sql, args...)
@@ -212,8 +222,6 @@ func (es Tests) Delete(ctx context.Context) (err error) {
 	return
 }
 
-
-// TODO: func (es []*Test) Delete(ctx context.Context) (err error) {}
 
 func (Test) Find(ctx context.Context, condition string, values []interface{}) (entities []Test, err error) {
 

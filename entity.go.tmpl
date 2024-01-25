@@ -94,7 +94,7 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
 	return nil
 }
 
-func (es {{ .GoName }}s) Insert(ctx context.Context) (err error) {
+func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
     var sql string
     var sqlRows []string
@@ -105,9 +105,9 @@ func (es {{ .GoName }}s) Insert(ctx context.Context) (err error) {
     }
 
     {{ if .AutoIncrementField }}if es[0].{{ .AutoIncrementField.GoName }} == 0 {
-        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}) VALUES `
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ .AutoIncrementField.SQLName }}{{ range $i, $f := .FieldsExcludeAutoIncrement }}, {{ $f.SQLName }}{{ end }}) VALUES `
         for i, e := range es {
-            sqlRows = append(sqlRows, fmt.Sprintf(`({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}$%d{{ end }})`{{ range $i, $f := .FieldsExcludeAutoIncrement }}, i * {{ len $.FieldsExcludeAutoIncrement }} + {{ add $i 1 }}{{ end }}))
+            sqlRows = append(sqlRows, fmt.Sprintf(`(DEFAULT{{ range $i, $f := .FieldsExcludeAutoIncrement }}, $%d{{ end }})`{{ range $i, $f := .FieldsExcludeAutoIncrement }}, i * {{ len $.FieldsExcludeAutoIncrement }} + {{ add $i 1 }}{{ end }}))
             args = append(args, {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
         }
     } else {
@@ -125,6 +125,16 @@ func (es {{ .GoName }}s) Insert(ctx context.Context) (err error) {
     {{ end }}
 
     sql += strings.Join(sqlRows, ", ")
+
+	for _, opt := range insertOptions {
+		if opt.ReturnAndUpdateVals {
+			err = fmt.Errorf("ReturnAndUpdateVals option is not supported for multi-insert now")
+            return
+		}
+		if opt.OnConflictStatement != "" {
+			sql += " ON CONFLICT "+ opt.OnConflictStatement
+		}
+	}
 
 	var rows pgx.Rows
 	rows, err = pgconn.Query(ctx, sql, args...)
@@ -204,8 +214,6 @@ func (es {{ .GoName }}s) Delete(ctx context.Context) (err error) {
 	return
 }
 {{ end }}
-
-// TODO: func (es []*{{ .GoName }}) Delete(ctx context.Context) (err error) {}
 
 func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interface{}) (entities []{{ .GoName }}, err error) {
 
