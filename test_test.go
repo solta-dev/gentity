@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func TestMain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := exec.CommandContext(ctx,
+	cmd := exec.CommandContext(ctx,
 		"docker", "run",
 		"--env", "POSTGRES_PASSWORD=gentity",
 		"--env", "POSTGRES_USER=gentity",
@@ -60,9 +61,22 @@ func TestMain(t *testing.T) {
 		"--memory", "100M", "--publish", fmt.Sprintf("%d:5432", pgPort),
 		"--rm",
 		"postgres:15",
-	).Start(); err != nil {
+	)
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	fmt.Println("started docker", cmd.Process.Pid)
+	defer func() {
+		if err := syscall.Kill(cmd.Process.Pid, syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("killed docker", cmd.Process.Pid)
+		if err := cmd.Wait(); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("waited docker", cmd.Process.Pid)
+	}()
+
 	pgconf, err := pgxpool.ParseConfig(fmt.Sprintf("host=127.0.0.1 user=gentity password=gentity dbname=gentity port=%d sslmode=disable", pgPort))
 	if err != nil {
 		t.Fatal(err)
@@ -240,4 +254,41 @@ func TestMain(t *testing.T) {
 		t.Error("e1 was not deleted")
 	}
 
+	// Multi insert
+	var esRefs = Tests(
+		[]*Test{
+			{IntA: 6, IntB: 6, StrA: "e", TimeA: t1},
+			{IntA: 6, IntB: 6, StrA: "f", TimeA: t1},
+			{IntA: 6, IntB: 6, StrA: "g", TimeA: t1},
+		})
+	if err = esRefs.Insert(ctx); err != nil {
+		t.Error(err)
+	}
+	es, err = Test{}.GetByTestIntAIntB(ctx, 6, 6)
+	if err != nil {
+		t.Error(err)
+	}
+	for i := range es {
+		es[i].ID = 0 // Because of we don't get autoincrement values in multi insert
+	}
+	if diff := deep.Equal(es, []Test{*esRefs[0], *esRefs[1], *esRefs[2]}); diff != nil {
+		t.Error(diff)
+	}
+
+	esRefs = Tests(
+		[]*Test{
+			{ID: 8, IntA: 9, IntB: 9, StrA: "h", TimeA: t1},
+			{ID: 9, IntA: 9, IntB: 9, StrA: "i", TimeA: t1},
+			{ID: 10, IntA: 9, IntB: 9, StrA: "j", TimeA: t1},
+		})
+	if err = esRefs.Insert(ctx); err != nil {
+		t.Error(err)
+	}
+	es, err = Test{}.GetByTestIntAIntB(ctx, 9, 9)
+	if err != nil {
+		t.Error(err)
+	}
+	if diff := deep.Equal(es, []Test{*esRefs[0], *esRefs[1], *esRefs[2]}); diff != nil {
+		t.Error(diff)
+	}
 }

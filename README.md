@@ -1,4 +1,4 @@
-![](https://img.shields.io/static/v1?label=Coverage&message=81.2%&color=green)
+![](https://img.shields.io/static/v1?label=Coverage&message=82.3%&color=green)
 
 # Gentity - is a codegen simple entity layer implementation 
 
@@ -7,7 +7,7 @@ Implemented methods with database calls via [github.com/jackc/pgx/v5](https://gi
 ## Features
 
 - [x] Insert one row
-- [ ] TODO: Insert multiple rows at one query
+- [x] Insert multiple rows at one query
 - [x] Update one row
 - [x] Delete one row
 - [ ] TODO: Delete multiple rows at one query
@@ -33,13 +33,16 @@ All methods expect context in first parameter. And pgx.Conn object under 'pgconn
   b. For each field in unique key specify gentity-tag with it's name: `gentity:"unique=primary_or_something"`
   c. For each field in non-unique key specify gentity-tag with it's name: `gentity:"index=some_index_name"`
   d. For autoincrement field (if it exists) specify gentity-tag `gentity:"autoincrement"`
+  e. For some functions entity must have a primary key.
 
 ## TODO: or not to do =)
 
 * ~~Tests~~
-* Multi-row insert and delete
-* Caches
+* ~~Multi-row insert~~ and delete
+* On conflict clause in multi row insert
+* Custom returns clause in multi row insert
 * Fetchers by begin of tree-indexes
 * Make create table queries
 * Make migration queries
+* Caches?
 * Automatic analyze table structure from DB

@@ -1,15 +1,17 @@
 package main
 
 type entity struct {
-	GoName                     string
-	SQLName                    string
-	Fields                     []field
-	FieldsExcludePrimaryKey    []field
-	FieldsExcludeAutoIncrement []field
-	PrimaryIndex               string
-	UniqIndexes                map[string][]*field
-	NonUniqIndexes             map[string][]*field
-	AutoIncrementField         *field
+	GoName                         string
+	SQLName                        string
+	Fields                         []field
+	FieldsExcludePrimaryKey        []field
+	FieldsExcludeAutoIncrement     []field
+	PrimaryKey                     string
+	UniqIndexes                    map[string][]*field
+	NonUniqIndexes                 map[string][]*field
+	AutoIncrementField             *field
+	ShortestUniqKey                string
+	ShortestUniqWOAutoIncrementKey string
 }
 
 func newEntity() *entity {

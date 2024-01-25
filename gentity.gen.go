@@ -32,6 +32,8 @@ type InsertOption struct {
  *  test_int_a_int_b: int_a, int_b
  ********************************/
 
+type Tests []*Test
+
 func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
     var sql, returning string
@@ -106,7 +108,44 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
 	return nil
 }
 
-// TODO: func (es []*Test) Insert(ctx context.Context) (err error) {}
+func (es Tests) Insert(ctx context.Context) (err error) {
+	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+    var sql string
+    var sqlRows []string
+    var args []any
+
+    if len(es) == 0 {
+        return nil
+    }
+
+    if es[0].ID == 0 {
+        sql = `INSERT INTO "tests" (int_a, int_b, str_a, time_a) VALUES `
+        for i, e := range es {
+            sqlRows = append(sqlRows, fmt.Sprintf(`($%d, $%d, $%d, $%d)`, i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4))
+            args = append(args, e.IntA, e.IntB, e.StrA, e.TimeA)
+        }
+    } else {
+        sql = `INSERT INTO "tests" (id, int_a, int_b, str_a, time_a) VALUES `
+        for i, e := range es {
+            sqlRows = append(sqlRows, fmt.Sprintf(`($%d, $%d, $%d, $%d, $%d)`, i * 5 + 1, i * 5 + 2, i * 5 + 3, i * 5 + 4, i * 5 + 5))
+            args = append(args, e.ID, e.IntA, e.IntB, e.StrA, e.TimeA)
+        }
+    }
+
+    sql += strings.Join(sqlRows, ", ")
+
+	var rows pgx.Rows
+	rows, err = pgconn.Query(ctx, sql, args...)
+	rows.Close()
+    if err == nil {
+        err = rows.Err()
+    }
+    if err != nil {
+        err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
+    }
+
+	return
+}
 
  
 func (e *Test) Update(ctx context.Context) (err error) {
@@ -115,17 +154,15 @@ func (e *Test) Update(ctx context.Context) (err error) {
 	sql := `UPDATE "tests" SET int_a = $1, int_b = $2, str_a = $3, time_a = $4	WHERE id = $5`
 	var rows pgx.Rows
 	rows, err = pgconn.Query(ctx, sql, e.IntA, e.IntB, e.StrA, e.TimeA, e.ID);
-	defer func(){
-		rows.Close()
-		if err == nil {
-			err = rows.Err()
-		}
-		if err != nil {
-			err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
-		}
-	}()
+    rows.Close()
+    if err == nil {
+        err = rows.Err()
+    }
+    if err != nil {
+        err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
+    }
 
-	return nil
+	return
 }
 
 func (e *Test) Delete(ctx context.Context) (err error) {
@@ -138,17 +175,15 @@ func (e *Test) Delete(ctx context.Context) (err error) {
 		sql,
 		e.ID, 
 	);
-	defer func(){
-		rows.Close()
-		if err == nil {
-			err = rows.Err()
-		}
-		if err != nil {
-			err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
-		}
-	}()
+    rows.Close()
+    if err == nil {
+        err = rows.Err()
+    }
+    if err != nil {
+        err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
+    }
 
-	return nil
+	return
 }
 
 

@@ -262,16 +262,16 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 	}
 
 	for name, fields := range e.UniqIndexes {
-		if name == "primary" || (e.PrimaryIndex != "" && len(e.UniqIndexes[e.PrimaryIndex]) > len(fields)) || e.PrimaryIndex == "" {
-			e.PrimaryIndex = name
+		if name == "primary" || (e.PrimaryKey != "" && len(e.UniqIndexes[e.PrimaryKey]) > len(fields)) || e.PrimaryKey == "" {
+			e.PrimaryKey = name
 		}
 		for _, f := range fields {
 			fmt.Println(e.GoName, name, "uniq", f.GoName)
 		}
 	}
-	if e.PrimaryIndex != "" {
-		e.FieldsExcludePrimaryKey = make([]field, 0, len(e.Fields)-len(e.UniqIndexes[e.PrimaryIndex]))
-		for _, f := range e.UniqIndexes[e.PrimaryIndex] {
+	if e.PrimaryKey != "" {
+		e.FieldsExcludePrimaryKey = make([]field, 0, len(e.Fields)-len(e.UniqIndexes[e.PrimaryKey]))
+		for _, f := range e.UniqIndexes[e.PrimaryKey] {
 			e.Fields[f.Num].InPrimaryKey = true
 		}
 		for _, f := range e.Fields {
@@ -283,9 +283,23 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 		e.FieldsExcludePrimaryKey = e.Fields
 	}
 
+	shortestUniqKeyLength := len(e.Fields)
+	shortestUniqKeyWOAutoIncrementLength := len(e.Fields)
 	for name, fields := range e.UniqIndexes {
+		var hasAutoIncrement bool
 		for _, f := range fields {
 			f.InIndexes = append(f.InIndexes, name)
+			if e.AutoIncrementField.GoName != f.GoName {
+				hasAutoIncrement = true
+			}
+		}
+		if len(fields) < shortestUniqKeyLength {
+			shortestUniqKeyLength = len(fields)
+			e.ShortestUniqKey = name
+		}
+		if !hasAutoIncrement && len(fields) < shortestUniqKeyWOAutoIncrementLength {
+			shortestUniqKeyWOAutoIncrementLength = len(fields)
+			e.ShortestUniqWOAutoIncrementKey = name
 		}
 	}
 	for name, fields := range e.NonUniqIndexes {
