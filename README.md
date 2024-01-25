@@ -1,3 +1,5 @@
+![](https://img.shields.io/static/v1?label=Coverage&message=81.2%&color=green)
+
 # Gentity - is a codegen simple entity layer implementation 
 
 Implemented methods with database calls via [github.com/jackc/pgx/v5](https://github.com/jackc/pgx)
