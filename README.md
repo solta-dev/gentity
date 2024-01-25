@@ -1,6 +1,6 @@
 # Gentity - is a codegen simple entity layer implementation 
 
-Implemented methods with database calls via github.com/jackc/pgx/v5
+Implemented methods with database calls via [github.com/jackc/pgx/v5](https://github.com/jackc/pgx)
 
 ## Features
 
@@ -34,10 +34,10 @@ All methods expect context in first parameter. And pgx.Conn object under 'pgconn
 
 ## TODO: or not to do =)
 
-* Tests
+* ~~Tests~~
 * Multi-row insert and delete
 * Caches
-* Fetchers by begin of indexes
+* Fetchers by begin of tree-indexes
 * Make create table queries
 * Make migration queries
 * Automatic analyze table structure from DB
