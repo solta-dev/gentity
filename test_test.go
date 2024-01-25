@@ -255,12 +255,11 @@ func TestMain(t *testing.T) {
 	}
 
 	// Multi insert
-	var esRefs = Tests(
-		[]*Test{
-			{IntA: 6, IntB: 6, StrA: "e", TimeA: t1},
-			{IntA: 6, IntB: 6, StrA: "f", TimeA: t1},
-			{IntA: 6, IntB: 6, StrA: "g", TimeA: t1},
-		})
+	var esRefs = Tests([]*Test{
+		{IntA: 6, IntB: 6, StrA: "e", TimeA: t1},
+		{IntA: 6, IntB: 6, StrA: "f", TimeA: t1},
+		{IntA: 6, IntB: 6, StrA: "g", TimeA: t1},
+	})
 	if err = esRefs.Insert(ctx); err != nil {
 		t.Error(err)
 	}
@@ -275,12 +274,11 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
-	esRefs = Tests(
-		[]*Test{
-			{ID: 8, IntA: 9, IntB: 9, StrA: "h", TimeA: t1},
-			{ID: 9, IntA: 9, IntB: 9, StrA: "i", TimeA: t1},
-			{ID: 10, IntA: 9, IntB: 9, StrA: "j", TimeA: t1},
-		})
+	esRefs = Tests([]*Test{
+		{ID: 8, IntA: 9, IntB: 9, StrA: "h", TimeA: t1},
+		{ID: 9, IntA: 9, IntB: 9, StrA: "i", TimeA: t1},
+		{ID: 10, IntA: 9, IntB: 9, StrA: "j", TimeA: t1},
+	})
 	if err = esRefs.Insert(ctx); err != nil {
 		t.Error(err)
 	}
@@ -291,4 +289,18 @@ func TestMain(t *testing.T) {
 	if diff := deep.Equal(es, []Test{*esRefs[0], *esRefs[1], *esRefs[2]}); diff != nil {
 		t.Error(diff)
 	}
+
+	// Multi delete
+	esRefs = Tests([]*Test{esRefs[0], esRefs[2]})
+	if err = esRefs.Delete(ctx); err != nil {
+		t.Error(err)
+	}
+	es, err = Test{}.GetByTestIntAIntB(ctx, 9, 9)
+	if err != nil {
+		t.Error(err)
+	}
+	if diff := deep.Equal(es, []Test{{ID: 9, IntA: 9, IntB: 9, StrA: "i", TimeA: t1}}); diff != nil {
+		t.Error(diff)
+	}
+
 }

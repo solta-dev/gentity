@@ -1,4 +1,4 @@
-![](https://img.shields.io/static/v1?label=Coverage&message=82.3%&color=green)
+![](https://img.shields.io/static/v1?label=Coverage&message=82.8%&color=green)
 
 # Gentity - is a codegen simple entity layer implementation 
 
@@ -10,7 +10,7 @@ Implemented methods with database calls via [github.com/jackc/pgx/v5](https://gi
 - [x] Insert multiple rows at one query
 - [x] Update one row
 - [x] Delete one row
-- [ ] TODO: Delete multiple rows at one query
+- [x] Delete multiple rows at one query
 - [x] Fetch rows by simple query
 - [x] Fetch all rows of table
 - [x] Fetch row by all values of unique index
@@ -38,7 +38,7 @@ All methods expect context in first parameter. And pgx.Conn object under 'pgconn
 ## TODO: or not to do =)
 
 * ~~Tests~~
-* ~~Multi-row insert~~ and delete
+* ~~Multi-row insert and delete~~
 * On conflict clause in multi row insert
 * Custom returns clause in multi row insert
 * Fetchers by begin of tree-indexes

@@ -186,6 +186,32 @@ func (e *Test) Delete(ctx context.Context) (err error) {
 	return
 }
 
+func (es Tests) Delete(ctx context.Context) (err error) {
+	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+
+	sql := `DELETE FROM "tests" WHERE `
+    rowsSql := make([]string, len(es))
+    var args []any
+
+    for i, e := range es {
+        rowsSql[i] = fmt.Sprintf(`(id = $%d)`, i * 1 + 1)
+        args = append(args, e.ID)
+    }
+
+    sql = sql + strings.Join(rowsSql, " OR ")
+	var rows pgx.Rows
+	rows, err = pgconn.Query(ctx, sql, args...);
+    rows.Close()
+    if err == nil {
+        err = rows.Err()
+    }
+    if err != nil {
+        err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
+    }
+
+	return
+}
+
 
 // TODO: func (es []*Test) Delete(ctx context.Context) (err error) {}
 
