@@ -155,7 +155,7 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if diff := deep.Equal(es, []Test{e1, e2, e3}); diff != nil {
+	if diff := deep.Equal(es, Tests{&e1, &e2, &e3}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -192,7 +192,7 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if diff := deep.Equal(e23, []Test{e2, e3}); diff != nil {
+	if diff := deep.Equal(e23, Tests{&e2, &e3}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -214,7 +214,7 @@ func TestMain(t *testing.T) {
 	if e12[0].ID > e12[1].ID {
 		e12[0], e12[1] = e12[1], e12[0]
 	}
-	if diff := deep.Equal(e12, []Test{*e1fromDB, e2}); diff != nil {
+	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
 		t.Error(diff)
 	}
 	e12, err = Test{}.MultiGetByTestStrA(ctx, []string{"a", "b"})
@@ -224,7 +224,7 @@ func TestMain(t *testing.T) {
 	if e12[0].ID > e12[1].ID {
 		e12[0], e12[1] = e12[1], e12[0]
 	}
-	if diff := deep.Equal(e12, []Test{*e1fromDB, e2}); diff != nil {
+	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -270,7 +270,7 @@ func TestMain(t *testing.T) {
 	for i := range es {
 		es[i].ID = 0 // Because of we don't get autoincrement values in multi insert
 	}
-	if diff := deep.Equal(es, []Test{*esRefs[0], *esRefs[1], *esRefs[2]}); diff != nil {
+	if diff := deep.Equal(es, Tests{esRefs[0], esRefs[1], esRefs[2]}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -286,7 +286,7 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if diff := deep.Equal(es, []Test{*esRefs[0], *esRefs[1], *esRefs[2]}); diff != nil {
+	if diff := deep.Equal(es, Tests{esRefs[0], esRefs[1], esRefs[2]}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -305,7 +305,7 @@ func TestMain(t *testing.T) {
 	for i := range es {
 		es[i].ID = 0 // Because of we don't get autoincrement values in multi insert
 	}
-	if diff := deep.Equal(es, []Test{*esRefs[1], *esRefs[2]}); diff != nil {
+	if diff := deep.Equal(es, Tests{esRefs[1], esRefs[2]}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -321,7 +321,7 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if diff := deep.Equal(es, []Test{{ID: 35, IntA: 9, IntB: 9, StrA: "i", TimeA: t1}}); diff != nil {
+	if diff := deep.Equal(es, Tests{{ID: 35, IntA: 9, IntB: 9, StrA: "i", TimeA: t1}}); diff != nil {
 		t.Error(diff)
 	}
 

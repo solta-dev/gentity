@@ -223,7 +223,7 @@ func (es Tests) Delete(ctx context.Context) (err error) {
 }
 
 
-func (Test) Find(ctx context.Context, condition string, values []interface{}) (entities []Test, err error) {
+func (Test) Find(ctx context.Context, condition string, values []interface{}) (entities Tests, err error) {
 
     return Test{}.Query(
         ctx,
@@ -234,7 +234,7 @@ func (Test) Find(ctx context.Context, condition string, values []interface{}) (e
     )
 }
 
-func (Test) Query(ctx context.Context, sql string, values []interface{}) (entities []Test, err error) {
+func (Test) Query(ctx context.Context, sql string, values []interface{}) (entities Tests, err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
 
 	var rows pgx.Rows
@@ -267,13 +267,13 @@ func (Test) Query(ctx context.Context, sql string, values []interface{}) (entiti
             return
         }
 
-		entities = append(entities, e)
+		entities = append(entities, &e)
 	}
 
 	return entities, nil
 }
 
-func (e Test) GetAll(ctx context.Context) ([]Test, error) {
+func (e Test) GetAll(ctx context.Context) (Tests, error) {
 	return e.Find(ctx, "1=1", []any{})
 }
 
@@ -288,13 +288,13 @@ func (e Test) GetByPrimary(ctx context.Context, id uint64) (*Test, error) {
 		return nil, err
 	}
 	if len(es) == 1 {
-		return &es[0], nil
+		return es[0], nil
 	}
 
 	return nil, nil
 }
 
-func (e Test) MultiGetByPrimary(ctx context.Context, id []uint64) ([]Test, error) {
+func (e Test) MultiGetByPrimary(ctx context.Context, id []uint64) (Tests, error) {
 	
 	var params []any = make([]any, 0, len(id) * 1)
 
@@ -316,13 +316,13 @@ func (e Test) GetByTestStrA(ctx context.Context, strA string) (*Test, error) {
 		return nil, err
 	}
 	if len(es) == 1 {
-		return &es[0], nil
+		return es[0], nil
 	}
 
 	return nil, nil
 }
 
-func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) ([]Test, error) {
+func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) (Tests, error) {
 	
 	var params []any = make([]any, 0, len(strA) * 1)
 
@@ -336,7 +336,7 @@ func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) ([]Test, er
 }
 
  
-func (e Test) GetByTestIntAIntB(ctx context.Context, intA int, intB SomeInts) ([]Test, error) {
+func (e Test) GetByTestIntAIntB(ctx context.Context, intA int, intB SomeInts) (Tests, error) {
 	return e.Find(
 		ctx,
 		"int_a = $1 AND int_b = $2",

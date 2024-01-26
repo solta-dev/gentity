@@ -215,7 +215,7 @@ func (es {{ .GoName }}s) Delete(ctx context.Context) (err error) {
 }
 {{ end }}
 
-func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interface{}) (entities []{{ .GoName }}, err error) {
+func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interface{}) (entities {{ .GoName }}s, err error) {
 
     return {{ .GoName }}{}.Query(
         ctx,
@@ -226,7 +226,7 @@ func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interf
     )
 }
 
-func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}) (entities []{{ .GoName }}, err error) {
+func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}) (entities {{ .GoName }}s, err error) {
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
 
 	var rows pgx.Rows
@@ -257,13 +257,13 @@ func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}
             return
         }
 
-		entities = append(entities, e)
+		entities = append(entities, &e)
 	}
 
 	return entities, nil
 }
 
-func (e {{ .GoName }}) GetAll(ctx context.Context) ([]{{ .GoName }}, error) {
+func (e {{ .GoName }}) GetAll(ctx context.Context) ({{ .GoName }}s, error) {
 	return e.Find(ctx, "1=1", []any{})
 }
 
@@ -279,13 +279,13 @@ func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx con
 		return nil, err
 	}
 	if len(es) == 1 {
-		return &es[0], nil
+		return es[0], nil
 	}
 
 	return nil, nil
 }
 
-func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) ([]{{ $entityGoName }}, error) {
+func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
 	{{ $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
 	var params []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
 
@@ -302,7 +302,7 @@ func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ct
 
 {{if len .NonUniqIndexes }} {{ $entityGoName := .GoName }}
 	{{- range $n, $idx := .NonUniqIndexes }}
-func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) ([]{{ $entityGoName }}, error) {
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
 	return e.Find(
 		ctx,
 		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
