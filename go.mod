@@ -1,4 +1,4 @@
-module github.com/dmitry-novozhilov/gentity
+module github.com/solta-dev/gentity
 
 go 1.19
 
