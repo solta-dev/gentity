@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-//go:generate go run github.com/dmitry-novozhilov/gentity
+//go:generate go run github.com/solta-dev/gentity
 
 type SomeInts int
 

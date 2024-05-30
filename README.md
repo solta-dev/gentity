@@ -1,4 +1,4 @@
-![](https://img.shields.io/static/v1?label=Coverage&message=82.5%&color=green)
+![](https://img.shields.io/static/v1?label=Coverage&message=81.8%&color=green)
 
 # Gentity - is a codegen simple entity layer implementation 
 
@@ -15,6 +15,7 @@ Implemented methods with database calls via [github.com/jackc/pgx/v5](https://gi
 - [x] Fetch all rows of table
 - [x] Fetch row by all values of unique index
 - [x] Fetch rows by all values of non-unique index
+- [x] Fetch rows via channel
 
 Update and Delete methods use primary key fields as arguments.
 
@@ -27,7 +28,7 @@ All methods expect context in first parameter. And pgx.Conn object under 'pgconn
 
 ## How to use
 
-1. In package with your entity structs: `//go:generate go run github.com/dmitry-novozhilov/gentity`
+1. In package with your entity structs: `//go:generate go run github.com/solta-dev/gentity`
 2. With each struct that has table in database:
   a. Before struct: `// gentity`
   b. For each field in unique key specify gentity-tag with it's name: `gentity:"unique=primary_or_something"`

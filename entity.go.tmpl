@@ -226,7 +226,19 @@ func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interf
     )
 }
 
+func ({{ .GoName }}) FindCh(ctx context.Context, condition string, values []interface{}) (entitiesCh <-chan *{{ .GoName }}, errCh <-chan error) {
+
+    return {{ .GoName }}{}.QueryCh(
+        ctx,
+        `SELECT {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}
+	    FROM "{{ .SQLName }}"
+	    WHERE ` + condition,
+        values,
+    )
+}
+
 func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}) (entities {{ .GoName }}s, err error) {
+
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
 
 	var rows pgx.Rows
@@ -241,6 +253,10 @@ func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}
 			err = rows.Err()
 		}
 		if err != nil {
+            if len(sql) > 500 {
+                sql = sql[:500] + "..."
+            }
+
 			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
 		}
 	}()
@@ -263,8 +279,74 @@ func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}
 	return entities, nil
 }
 
+func ({{ .GoName }}) QueryCh(ctx context.Context, sql string, values []interface{}) (<-chan *{{ .GoName }}, <-chan error) {
+
+	var (
+		err error
+		rows pgx.Rows
+    	entitiesCh chan *Test = make(chan *Test, 100)
+    	errCh chan error = make(chan error)
+	)
+
+    defer func(){
+        if err != nil {
+            errCh <- err
+        }
+        close(errCh)
+        close(entitiesCh)
+    }()
+
+	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+
+	rows, err = pgconn.Query(
+		ctx,
+		sql,
+		values...
+	)
+	defer func(){
+		rows.Close()
+		if err == nil {
+			err = rows.Err()
+		}
+		if err != nil {
+            if len(sql) > 500 {
+                sql = sql[:500] + "..."
+            }
+
+			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
+		}
+	}()
+
+    if err != nil {
+        errCh <- err
+        return entitiesCh, errCh
+    }
+
+    for rows.Next() {
+
+		e := {{ .GoName }}{}
+
+		if err = rows.Scan(
+			{{- range $i, $f := .Fields }}
+			&e.{{ $f.GoName }},
+			{{- end }}	
+		); err != nil {
+            errCh <- err
+            return entitiesCh, errCh
+        }
+
+        entitiesCh <- &e
+	}
+
+    return entitiesCh, errCh
+}
+
 func (e {{ .GoName }}) GetAll(ctx context.Context) ({{ .GoName }}s, error) {
 	return e.Find(ctx, "1=1", []any{})
+}
+
+func (e {{ .GoName }}) GetAllCh(ctx context.Context) (entitiesCh <-chan *{{ .GoName }}, errCh <-chan error) {
+	return e.FindCh(ctx, "1=1", []any{})
 }
 
 {{ if len .UniqIndexes }} {{ $entityGoName := .GoName }}
@@ -297,6 +379,19 @@ func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ct
 
 	return e.Find(ctx, strings.Join(where, " OR "), params)
 }
+
+func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) (entitiesCh <-chan *{{ $entityGoName }}, errCh <-chan error) {
+	{{ $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
+	var params []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
+
+	where := make([]string, len({{ $firstParam }}))
+	for i := range {{ $firstParam }} {
+		where[i] = fmt.Sprintf("({{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = $%d{{ end }})"{{ range $i, $f := $idx }}, {{ add 1 $i }} + i{{ end }})
+		params = append(params, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ end }})
+	}
+
+	return e.FindCh(ctx, strings.Join(where, " OR "), params)
+}
 	{{- end }}
 {{- end }}
 
@@ -304,6 +399,14 @@ func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ct
 	{{- range $n, $idx := .NonUniqIndexes }}
 func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
 	return e.Find(
+		ctx,
+		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
+		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },
+	)
+}
+
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) (entitiesCh <-chan *{{ $entityGoName }}, errCh <-chan error) {
+	return e.FindCh(
 		ctx,
 		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
 		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },

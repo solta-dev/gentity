@@ -159,6 +159,19 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
+	// Get all via channel
+	es = []*Test{}
+	esCh, errCh := Test{}.GetAllCh(ctx)
+	for e := range esCh {
+		es = append(es, e)
+	}
+	if diff := deep.Equal(es, Tests{&e1, &e2, &e3}); diff != nil {
+		t.Error(diff)
+	}
+	if err = <-errCh; err != nil {
+		t.Error(err)
+	}
+
 	// Return and update vals
 	e4 := Test{IntA: 4, IntB: 4, StrA: "d"}
 	if err = e4.Insert(ctx, InsertOption{ReturnAndUpdateVals: true}); err != nil {
@@ -196,6 +209,19 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
+	// Get by non unique index via channel
+	e23 = []*Test{}
+	esCh, errCh = Test{}.GetByTestIntAIntBCh(ctx, 2, 2)
+	for e := range esCh {
+		e23 = append(e23, e)
+	}
+	if diff := deep.Equal(e23, Tests{&e2, &e3}); diff != nil {
+		t.Error(diff)
+	}
+	if err = <-errCh; err != nil {
+		t.Error(err)
+	}
+
 	// Get by unique index
 	var e1fromDB2 *Test
 	e1fromDB2, err = Test{}.GetByTestStrA(ctx, "a")
@@ -217,6 +243,22 @@ func TestMain(t *testing.T) {
 	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
 		t.Error(diff)
 	}
+
+	e12 = []*Test{}
+	esCh, errCh = Test{}.MultiGetByPrimaryCh(ctx, []uint64{1, 2})
+	for e := range esCh {
+		e12 = append(e12, e)
+	}
+	if e12[0].ID > e12[1].ID {
+		e12[0], e12[1] = e12[1], e12[0]
+	}
+	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
+		t.Error(diff)
+	}
+	if err = <-errCh; err != nil {
+		t.Error(err)
+	}
+
 	e12, err = Test{}.MultiGetByTestStrA(ctx, []string{"a", "b"})
 	if err != nil {
 		t.Error(err)
@@ -226,6 +268,21 @@ func TestMain(t *testing.T) {
 	}
 	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
 		t.Error(diff)
+	}
+
+	e12 = []*Test{}
+	esCh, errCh = Test{}.MultiGetByTestStrACh(ctx, []string{"a", "b"})
+	for e := range esCh {
+		e12 = append(e12, e)
+	}
+	if e12[0].ID > e12[1].ID {
+		e12[0], e12[1] = e12[1], e12[0]
+	}
+	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
+		t.Error(diff)
+	}
+	if err = <-errCh; err != nil {
+		t.Error(err)
 	}
 
 	// Update
