@@ -301,11 +301,9 @@ func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) (<-ch
     defer func(){
         if err != nil {
             errCh <- err
-            close(errCh)
-        } else {
-            close(errCh)
-            close(entitiesCh)
         }
+        close(errCh)
+        close(entitiesCh)
     }()
 
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)

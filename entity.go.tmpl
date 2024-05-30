@@ -284,7 +284,7 @@ func ({{ .GoName }}) QueryCh(ctx context.Context, sql string, values []interface
 	var (
 		err error
 		rows pgx.Rows
-    	entitiesCh chan *Test = make(chan *Test, 100)
+    	entitiesCh chan *{{ .GoName }} = make(chan *{{ .GoName }}, 100)
     	errCh chan error = make(chan error)
 	)
 
