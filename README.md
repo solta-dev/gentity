@@ -46,3 +46,10 @@ All methods expect context in first parameter. And pgx.Conn object under 'pgconn
 * Make migration queries
 * Caches?
 * Automatic analyze table structure from DB
+
+
+## Alternatives
+
+* [Gorm](https://pkg.go.dev/gorm.io/gorm)
+* [Ent](https://pkg.go.dev/entgo.io/ent)
+* [Sqlc](https://pkg.go.dev/github.com/sqlc-dev/sqlc)
