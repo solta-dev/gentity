@@ -1,4 +1,4 @@
-![](https://img.shields.io/static/v1?label=Coverage&message=82.0%&color=green)
+![](https://img.shields.io/static/v1?label=Coverage&message=82.2%&color=green)
 
 # Gentity - is a codegen simple entity layer implementation 
 

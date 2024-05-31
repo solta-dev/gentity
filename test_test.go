@@ -159,9 +159,16 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
+	var (
+		esCh  chan *Test
+		errCh chan error
+	)
+
 	// Get all via channel
 	es = []*Test{}
-	esCh, errCh := Test{}.GetAllCh(ctx)
+	esCh = make(chan *Test)
+	errCh = make(chan error)
+	go Test{}.GetAllCh(ctx, esCh, errCh)
 	for e := range esCh {
 		es = append(es, e)
 	}
@@ -211,7 +218,9 @@ func TestMain(t *testing.T) {
 
 	// Get by non unique index via channel
 	e23 = []*Test{}
-	esCh, errCh = Test{}.GetByTestIntAIntBCh(ctx, 2, 2)
+	esCh = make(chan *Test)
+	errCh = make(chan error)
+	go Test{}.GetByTestIntAIntBCh(ctx, 2, 2, esCh, errCh)
 	for e := range esCh {
 		e23 = append(e23, e)
 	}
@@ -245,7 +254,9 @@ func TestMain(t *testing.T) {
 	}
 
 	e12 = []*Test{}
-	esCh, errCh = Test{}.MultiGetByPrimaryCh(ctx, []uint64{1, 2})
+	esCh = make(chan *Test)
+	errCh = make(chan error)
+	go Test{}.MultiGetByPrimaryCh(ctx, []uint64{1, 2}, esCh, errCh)
 	for e := range esCh {
 		e12 = append(e12, e)
 	}
@@ -271,7 +282,9 @@ func TestMain(t *testing.T) {
 	}
 
 	e12 = []*Test{}
-	esCh, errCh = Test{}.MultiGetByTestStrACh(ctx, []string{"a", "b"})
+	esCh = make(chan *Test)
+	errCh = make(chan error)
+	go Test{}.MultiGetByTestStrACh(ctx, []string{"a", "b"}, esCh, errCh)
 	for e := range esCh {
 		e12 = append(e12, e)
 	}

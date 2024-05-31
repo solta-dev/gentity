@@ -234,14 +234,16 @@ func (Test) Find(ctx context.Context, condition string, values []interface{}) (e
     )
 }
 
-func (Test) FindCh(ctx context.Context, condition string, values []interface{}) (entitiesCh <-chan *Test, errCh <-chan error) {
+func (Test) FindCh(ctx context.Context, condition string, values []interface{}, entitiesCh chan<- *Test, errCh chan<- error) {
 
-    return Test{}.QueryCh(
+    Test{}.QueryCh(
         ctx,
         `SELECT id, int_a, int_b, str_a, time_a
 	    FROM "tests"
 	    WHERE ` + condition,
         values,
+        entitiesCh,
+        errCh,
     )
 }
 
@@ -289,13 +291,11 @@ func (Test) Query(ctx context.Context, sql string, values []interface{}) (entiti
 	return entities, nil
 }
 
-func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) (<-chan *Test, <-chan error) {
+func (Test) QueryCh(ctx context.Context, sql string, values []interface{}, entitiesCh chan<- *Test, errCh chan<- error) {
 
 	var (
 		err error
 		rows pgx.Rows
-    	entitiesCh chan *Test = make(chan *Test, 100)
-    	errCh chan error = make(chan error)
 	)
 
     defer func(){
@@ -308,28 +308,23 @@ func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) (<-ch
 
 	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
 
-	rows, err = pgconn.Query(
-		ctx,
-		sql,
-		values...
-	)
+	rows, err = pgconn.Query(ctx, sql, values...)
 	defer func(){
 		rows.Close()
 		if err == nil {
 			err = rows.Err()
 		}
 		if err != nil {
-            if len(sql) > 500 {
-                sql = sql[:500] + "..."
-            }
+			if len(sql) > 500 {
+				sql = sql[:500] + "..."
+			}
 
 			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
 		}
 	}()
 
     if err != nil {
-        errCh <- err
-        return entitiesCh, errCh
+        return
     }
 
     for rows.Next() {
@@ -344,21 +339,21 @@ func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) (<-ch
 			&e.TimeA,	
 		); err != nil {
             errCh <- err
-            return entitiesCh, errCh
+            return
         }
 
-        entitiesCh <- &e
+		entitiesCh <- &e
 	}
 
-    return entitiesCh, errCh
+    return
 }
 
 func (e Test) GetAll(ctx context.Context) (Tests, error) {
 	return e.Find(ctx, "1=1", []any{})
 }
 
-func (e Test) GetAllCh(ctx context.Context) (entitiesCh <-chan *Test, errCh <-chan error) {
-	return e.FindCh(ctx, "1=1", []any{})
+func (e Test) GetAllCh(ctx context.Context, entitiesCh chan<- *Test, errCh chan<- error) {
+	e.FindCh(ctx, "1=1", []any{}, entitiesCh, errCh)
 }
 
  
@@ -391,7 +386,7 @@ func (e Test) MultiGetByPrimary(ctx context.Context, id []uint64) (Tests, error)
 	return e.Find(ctx, strings.Join(where, " OR "), params)
 }
 
-func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64) (entitiesCh <-chan *Test, errCh <-chan error) {
+func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64, entitiesCh chan<- *Test, errCh chan<- error) {
 	
 	var params []any = make([]any, 0, len(id) * 1)
 
@@ -401,7 +396,7 @@ func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64) (entitiesCh 
 		params = append(params, id[i])
 	}
 
-	return e.FindCh(ctx, strings.Join(where, " OR "), params)
+	e.FindCh(ctx, strings.Join(where, " OR "), params, entitiesCh, errCh)
 }
 func (e Test) GetByTestStrA(ctx context.Context, strA string) (*Test, error) {
 	es, err := e.Find(
@@ -432,7 +427,7 @@ func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) (Tests, err
 	return e.Find(ctx, strings.Join(where, " OR "), params)
 }
 
-func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string) (entitiesCh <-chan *Test, errCh <-chan error) {
+func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string, entitiesCh chan<- *Test, errCh chan<- error) {
 	
 	var params []any = make([]any, 0, len(strA) * 1)
 
@@ -442,7 +437,7 @@ func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string) (entities
 		params = append(params, strA[i])
 	}
 
-	return e.FindCh(ctx, strings.Join(where, " OR "), params)
+	e.FindCh(ctx, strings.Join(where, " OR "), params, entitiesCh, errCh)
 }
 
  
@@ -454,11 +449,13 @@ func (e Test) GetByTestIntAIntB(ctx context.Context, intA int, intB SomeInts) (T
 	)
 }
 
-func (e Test) GetByTestIntAIntBCh(ctx context.Context, intA int, intB SomeInts) (entitiesCh <-chan *Test, errCh <-chan error) {
-	return e.FindCh(
+func (e Test) GetByTestIntAIntBCh(ctx context.Context, intA int, intB SomeInts, entitiesCh chan<- *Test, errCh chan<- error) {
+	e.FindCh(
 		ctx,
 		"int_a = $1 AND int_b = $2",
 		[]any{ intA, intB },
+		entitiesCh,
+		errCh,
 	)
 }
 
