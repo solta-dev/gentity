@@ -8,6 +8,7 @@ import (
 	"strings"
 	"context"
 	"github.com/jackc/pgx/v5"
+    "github.com/jackc/pgx/v5/pgconn"
     {{ range $import :=.Imports }}
     "{{ $import }}"
     {{ end }}
@@ -16,6 +17,22 @@ import (
 type InsertOption struct {
 	ReturnAndUpdateVals bool
 	OnConflictStatement string
+}
+
+type DBExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (commandTag pgconn.CommandTag, err error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type DBExecutorKey string
+
+func fromContext(ctx context.Context) DBExecutor {
+    dbe, ok := ctx.Value(DBExecutorKey("dbExecutor")).(DBExecutor)
+    if !ok {
+        panic("DBExecutor not found in context")
+    }
+    return dbe
 }
 
 {{ range $entity := .Entities }}

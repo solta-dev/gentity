@@ -1,4 +1,4 @@
-![](https://img.shields.io/static/v1?label=Coverage&message=82.2%&color=green)
+![](https://img.shields.io/static/v1?label=Coverage&message=81.4%&color=green)
 
 # Gentity - is a codegen simple entity layer implementation 
 
@@ -30,11 +30,41 @@ All methods expect context in first parameter. And pgx.Conn object under 'pgconn
 
 1. In package with your entity structs: `//go:generate go run github.com/solta-dev/gentity`
 2. With each struct that has table in database:
-  a. Before struct: `// gentity`
-  b. For each field in unique key specify gentity-tag with it's name: `gentity:"unique=primary_or_something"`
-  c. For each field in non-unique key specify gentity-tag with it's name: `gentity:"index=some_index_name"`
-  d. For autoincrement field (if it exists) specify gentity-tag `gentity:"autoincrement"`
-  e. For some functions entity must have a primary key.
+   - Before struct: `// gentity`
+   - For each field in unique key specify gentity-tag with it's name: `gentity:"unique=primary_or_something"`
+   - For each field in non-unique key specify gentity-tag with it's name: `gentity:"index=some_index_name"`
+   - For autoincrement field (if it exists) specify gentity-tag `gentity:"autoincrement"`
+   - For some functions entity must have a primary key.
+   - Example:
+```go
+// gentity
+type Test struct {
+	ID    uint64    `gentity:"unique=primary autoincrement"`
+	IntA  int       `gentity:"index=test_int_a_int_b"`
+	IntB  SomeInts  `gentity:"index=test_int_a_int_b"`
+	StrA  string    `gentity:"unique=test_str_a"`
+	TimeA time.Time `gentity:""`
+}
+
+```
+3. Prepare to use entities:
+```go
+// Get connection from pgx pool
+pgConn, err = pgpool.Acquire(ctx)
+// Put connection to ctx (you can put pool, connection or transaction)
+ctx := context.WithValue(context.Backgrond(), DBExecutorKey("dbExecutor"), pgConn.Conn())
+```
+4. Insert new row:
+```go
+e := Test{IntA: 1, IntB: 1, StrA: "a", TimeA: t1}
+if err = e.Insert(ctx); err != nil {
+    panic(err)
+}
+fmt.Println("Id of new item is ", e.ID)
+
+```
+5. Other use cases see in [test](test_test.go).
+
 
 ## TODO: or not to do =)
 

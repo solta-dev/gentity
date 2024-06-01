@@ -104,7 +104,7 @@ func TestMain(t *testing.T) {
 		}
 	}
 
-	ctx = context.WithValue(ctx, "pgconn", *pgConn.Conn())
+	ctx = context.WithValue(ctx, DBExecutorKey("dbExecutor"), pgConn.Conn())
 
 	err = Test{}.createTable(ctx)
 	if err != nil {

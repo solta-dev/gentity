@@ -8,12 +8,29 @@ import (
 	"strings"
 	"context"
 	"github.com/jackc/pgx/v5"
+    "github.com/jackc/pgx/v5/pgconn"
     
 )
 
 type InsertOption struct {
 	ReturnAndUpdateVals bool
 	OnConflictStatement string
+}
+
+type DBExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (commandTag pgconn.CommandTag, err error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type DBExecutorKey string
+
+func fromContext(ctx context.Context) DBExecutor {
+    dbe, ok := ctx.Value(DBExecutorKey("dbExecutor")).(DBExecutor)
+    if !ok {
+        panic("DBExecutor not found in context")
+    }
+    return dbe
 }
 
 
@@ -35,7 +52,7 @@ type InsertOption struct {
 type Tests []*Test
 
 func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+    dbExecutor := fromContext(ctx)
     var sql, returning string
     var args []any
 
@@ -68,7 +85,7 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
     }
 
 	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, args...)
+	rows, err = dbExecutor.Query(ctx, sql, args...)
 	defer func(){
 		rows.Close()
 		if err == nil {
@@ -109,7 +126,7 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
 }
 
 func (es Tests) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
     var sql string
     var sqlRows []string
     var args []any
@@ -144,12 +161,7 @@ func (es Tests) Insert(ctx context.Context, insertOptions ...InsertOption) (err 
 		}
 	}
 
-	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, args...)
-	rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
+	_, err = dbExecutor.Exec(ctx, sql, args...)
     if err != nil {
         err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
     }
@@ -159,15 +171,10 @@ func (es Tests) Insert(ctx context.Context, insertOptions ...InsertOption) (err 
 
  
 func (e *Test) Update(ctx context.Context) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	sql := `UPDATE "tests" SET int_a = $1, int_b = $2, str_a = $3, time_a = $4	WHERE id = $5`
-	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, e.IntA, e.IntB, e.StrA, e.TimeA, e.ID);
-    rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
+	_, err = dbExecutor.Exec(ctx, sql, e.IntA, e.IntB, e.StrA, e.TimeA, e.ID);
     if err != nil {
         err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
     }
@@ -176,19 +183,14 @@ func (e *Test) Update(ctx context.Context) (err error) {
 }
 
 func (e *Test) Delete(ctx context.Context) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	sql := `DELETE FROM "tests" WHERE id = $1`
-	var rows pgx.Rows
-	rows, err = pgconn.Query(
+	_, err = dbExecutor.Exec(
 		ctx,
 		sql,
 		e.ID, 
 	);
-    rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
     if err != nil {
         err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
     }
@@ -197,7 +199,7 @@ func (e *Test) Delete(ctx context.Context) (err error) {
 }
 
 func (es Tests) Delete(ctx context.Context) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	sql := `DELETE FROM "tests" WHERE `
     rowsSql := make([]string, len(es))
@@ -209,12 +211,8 @@ func (es Tests) Delete(ctx context.Context) (err error) {
     }
 
     sql = sql + strings.Join(rowsSql, " OR ")
-	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, args...);
-    rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
+
+	_, err = dbExecutor.Exec(ctx, sql, args...);
     if err != nil {
         err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
     }
@@ -249,10 +247,10 @@ func (Test) FindCh(ctx context.Context, condition string, values []interface{}, 
 
 func (Test) Query(ctx context.Context, sql string, values []interface{}) (entities Tests, err error) {
 
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	var rows pgx.Rows
-	rows, err = pgconn.Query(
+	rows, err = dbExecutor.Query(
 		ctx,
 		sql,
 		values...
@@ -306,9 +304,9 @@ func (Test) QueryCh(ctx context.Context, sql string, values []interface{}, entit
         close(entitiesCh)
     }()
 
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
-	rows, err = pgconn.Query(ctx, sql, values...)
+	rows, err = dbExecutor.Query(ctx, sql, values...)
 	defer func(){
 		rows.Close()
 		if err == nil {

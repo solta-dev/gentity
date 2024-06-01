@@ -19,7 +19,7 @@
 type {{ .GoName }}s []*{{ .GoName }}
 
 func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+    dbExecutor := fromContext(ctx)
     var sql, returning string
     var args []any
 
@@ -56,7 +56,7 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
     }
 
 	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, args...)
+	rows, err = dbExecutor.Query(ctx, sql, args...)
 	defer func(){
 		rows.Close()
 		if err == nil {
@@ -95,7 +95,7 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
 }
 
 func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
     var sql string
     var sqlRows []string
     var args []any
@@ -136,12 +136,7 @@ func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOpti
 		}
 	}
 
-	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, args...)
-	rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
+	_, err = dbExecutor.Exec(ctx, sql, args...)
     if err != nil {
         err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
     }
@@ -151,15 +146,10 @@ func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOpti
 
 {{ if .PrimaryKey }} {{ $primaryKey := index .UniqIndexes .PrimaryKey }}{{ $autoIncrementField := .AutoIncrementField }}
 func (e *{{ .GoName }}) Update(ctx context.Context) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	sql := `UPDATE "{{ .SQLName }}" SET {{ range $i, $f := .FieldsExcludePrimaryKey }}{{ if $i }}, {{ end }}{{ $f.SQLName }} = ${{ add $i 1 }}{{ end }}	WHERE {{ range $i, $f := $primaryKey }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i (len $.FieldsExcludePrimaryKey) }}{{ end }}`
-	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, {{ range $i, $f := .FieldsExcludePrimaryKey }}e.{{ $f.GoName }}, {{ end }}{{ range $i, $f := $primaryKey }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }});
-    rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
+	_, err = dbExecutor.Exec(ctx, sql, {{ range $i, $f := .FieldsExcludePrimaryKey }}e.{{ $f.GoName }}, {{ end }}{{ range $i, $f := $primaryKey }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }});
     if err != nil {
         err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
     }
@@ -168,19 +158,14 @@ func (e *{{ .GoName }}) Update(ctx context.Context) (err error) {
 }
 
 func (e *{{ .GoName }}) Delete(ctx context.Context) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	sql := `DELETE FROM "{{ .SQLName }}" WHERE {{ range $i, $f := $primaryKey }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add $f.Num 1 }}{{ end }}`
-	var rows pgx.Rows
-	rows, err = pgconn.Query(
+	_, err = dbExecutor.Exec(
 		ctx,
 		sql,
 		{{ range $f := $primaryKey }}e.{{ $f.GoName }}, {{ end }}
 	);
-    rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
     if err != nil {
         err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
     }
@@ -189,7 +174,7 @@ func (e *{{ .GoName }}) Delete(ctx context.Context) (err error) {
 }
 
 func (es {{ .GoName }}s) Delete(ctx context.Context) (err error) {
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	sql := `DELETE FROM "{{ .SQLName }}" WHERE `
     rowsSql := make([]string, len(es))
@@ -201,12 +186,8 @@ func (es {{ .GoName }}s) Delete(ctx context.Context) (err error) {
     }
 
     sql = sql + strings.Join(rowsSql, " OR ")
-	var rows pgx.Rows
-	rows, err = pgconn.Query(ctx, sql, args...);
-    rows.Close()
-    if err == nil {
-        err = rows.Err()
-    }
+
+	_, err = dbExecutor.Exec(ctx, sql, args...);
     if err != nil {
         err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
     }
@@ -241,10 +222,10 @@ func ({{ .GoName }}) FindCh(ctx context.Context, condition string, values []inte
 
 func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}) (entities {{ .GoName }}s, err error) {
 
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
 	var rows pgx.Rows
-	rows, err = pgconn.Query(
+	rows, err = dbExecutor.Query(
 		ctx,
 		sql,
 		values...
@@ -296,9 +277,9 @@ func ({{ .GoName }}) QueryCh(ctx context.Context, sql string, values []interface
         close(entitiesCh)
     }()
 
-	var pgconn pgx.Conn = ctx.Value("pgconn").(pgx.Conn)
+	dbExecutor := fromContext(ctx)
 
-	rows, err = pgconn.Query(ctx, sql, values...)
+	rows, err = dbExecutor.Query(ctx, sql, values...)
 	defer func(){
 		rows.Close()
 		if err == nil {

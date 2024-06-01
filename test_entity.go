@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 //go:generate go run github.com/solta-dev/gentity
@@ -27,7 +25,7 @@ type Test struct {
 }
 
 func (Test) createTable(ctx context.Context) error {
-	pgConn := ctx.Value("pgconn").(pgx.Conn)
+	pgConn := ctx.Value(DBExecutorKey("dbExecutor")).(DBExecutor)
 
 	if _, err := pgConn.Exec(context.Background(), `CREATE TABLE tests (
 		id bigserial PRIMARY KEY,
