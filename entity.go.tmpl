@@ -181,7 +181,8 @@ func (es {{ .GoName }}s) Delete(ctx context.Context) (err error) {
     var args []any
 
     for i, e := range es {
-        rowsSql[i] = fmt.Sprintf(`({{ range $i, $f := $primaryKey }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = $%d{{ end }})`, i * {{ len $primaryKey }} + 1)
+        rowsSql[i] = fmt.Sprintf(`({{ range $i, $f := $primaryKey }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = $%d{{ end }})`,
+            {{ range $i, $f := $primaryKey }}{{ if $i }}, {{ end }}i * {{ len $primaryKey }} + {{ add 1 $i }}{{ end }})
         args = append(args, {{ range $i, $f := $primaryKey }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
     }
 
