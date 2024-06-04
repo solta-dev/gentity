@@ -119,7 +119,7 @@ func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOpti
     }{{ else }}
     sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}) VALUES `
     for i, e := range es {
-        sqlRows = append(sqlRows, sprintf(`({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}$%d{{ end }})`{{ range $i, $f := .Fields }}, i * {{ len $.Fields }} + {{ add $i 1 }}{{ end }}))
+        sqlRows = append(sqlRows, fmt.Sprintf(`({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}$%d{{ end }})`{{ range $i, $f := .Fields }}, i * {{ len $.Fields }} + {{ add $i 1 }}{{ end }}))
         args = append(args, {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
     }
     {{ end }}

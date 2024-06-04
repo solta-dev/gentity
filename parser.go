@@ -206,7 +206,7 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 			fld.GoType = e.(*ast.Ident).Name
 			fld.Num = len(ent.Fields)
 			procFieldTag(f, ent, fld)
-			ent.Fields = append(ent.Fields, *fld)
+			ent.Fields = append(ent.Fields, fld)
 		}
 	case *ast.SelectorExpr:
 		fld := newField()
@@ -218,7 +218,7 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 			fld.GoType = expX.Name + "." + fld.GoType
 		}
 		procFieldTag(f, ent, fld)
-		ent.Fields = append(ent.Fields, *fld)
+		ent.Fields = append(ent.Fields, fld)
 	case *ast.StarExpr:
 		se := e.(*ast.StarExpr)
 		sm.procType(f, se.X, ent)
@@ -270,7 +270,7 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 		}
 	}
 	if e.PrimaryKey != "" {
-		e.FieldsExcludePrimaryKey = make([]field, 0, len(e.Fields)-len(e.UniqIndexes[e.PrimaryKey]))
+		e.FieldsExcludePrimaryKey = make([]*field, 0, len(e.Fields)-len(e.UniqIndexes[e.PrimaryKey]))
 		for _, f := range e.UniqIndexes[e.PrimaryKey] {
 			e.Fields[f.Num].InPrimaryKey = true
 		}
@@ -289,7 +289,7 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 		var hasAutoIncrement bool
 		for _, f := range fields {
 			f.InIndexes = append(f.InIndexes, name)
-			if e.AutoIncrementField.GoName != f.GoName {
+			if e.AutoIncrementField != nil && e.AutoIncrementField.GoName != f.GoName {
 				hasAutoIncrement = true
 			}
 		}
@@ -311,7 +311,7 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 	if e.AutoIncrementField == nil {
 		e.FieldsExcludeAutoIncrement = e.Fields
 	} else {
-		e.FieldsExcludeAutoIncrement = make([]field, 0, len(e.Fields)-1)
+		e.FieldsExcludeAutoIncrement = make([]*field, 0, len(e.Fields)-1)
 		for _, f := range e.Fields {
 			if e.AutoIncrementField.GoName != f.GoName {
 				e.FieldsExcludeAutoIncrement = append(e.FieldsExcludeAutoIncrement, f)
