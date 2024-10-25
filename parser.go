@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -146,7 +145,7 @@ type structsMap map[string]structInfo
 
 func procFieldTag(f *ast.Field, ent *entity, fld *field) {
 	if f.Tag != nil {
-		fmt.Println(ent.GoName, "field", fld.GoName, "tag", f.Tag.Value)
+		log.Println(ent.GoName, "field", fld.GoName, "tag", f.Tag.Value)
 		tag := newTag(f.Tag.Value, "gentity")
 		if tag != nil {
 			if index, ok := tag.byName["index"]; ok {
@@ -157,7 +156,7 @@ func procFieldTag(f *ast.Field, ent *entity, fld *field) {
 				}
 			}
 			if unique, ok := tag.byName["unique"]; ok {
-				fmt.Println(ent.GoName, "uniq", unique, "field", fld.GoName)
+				log.Println(ent.GoName, "uniq", unique, "field", fld.GoName)
 				if _, ok := ent.UniqIndexes[unique]; !ok {
 					ent.UniqIndexes[unique] = []*field{fld}
 				} else {
@@ -169,7 +168,7 @@ func procFieldTag(f *ast.Field, ent *entity, fld *field) {
 			}
 		}
 	} else {
-		fmt.Println(ent.GoName, "field", fld.GoName, "no tag")
+		log.Println(ent.GoName, "field", fld.GoName, "no tag")
 	}
 }
 
@@ -178,7 +177,7 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 	case *ast.Ident:
 		id := e.(*ast.Ident)
 
-		fmt.Println(ent.GoName, "fields:", f.Names, "ident.name:", id.Name)
+		log.Println(ent.GoName, "table", ent.SQLName, "fields:", f.Names, "ident.name:", id.Name)
 		if len(f.Names) == 0 {
 			if _, ok := sm[id.Name]; !ok {
 				log.Fatalf("Embedded structure %s wasn't found in package", id.Name)
@@ -242,7 +241,11 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 	}
 
 	e.GoName = sm[name].typeSpec.Name.Name
-	e.SQLName = camelCaseToSnakeCase(mkPlural(e.GoName))
+	e.SQLName = e.GoName
+	if !*singularTablesNames {
+		e.SQLName = mkPlural(e.SQLName)
+	}
+	e.SQLName = camelCaseToSnakeCase(e.SQLName)
 
 	for _, f := range sm[name].structType.Fields.List {
 		sm.procType(f, f.Type, e)
@@ -266,7 +269,7 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 			e.PrimaryKey = name
 		}
 		for _, f := range fields {
-			fmt.Println(e.GoName, name, "uniq", f.GoName)
+			log.Println(e.GoName, name, "uniq", f.GoName)
 		}
 	}
 	if e.PrimaryKey != "" {

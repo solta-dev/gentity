@@ -45,8 +45,10 @@ type Test struct {
 	StrA  string    `gentity:"unique=test_str_a"`
 	TimeA time.Time `gentity:""`
 }
-
 ```
+
+If your tables names in singular form, please specify `--singular` flag in go:generate command
+
 3. Prepare to use entities:
 ```go
 // Get connection from pgx pool

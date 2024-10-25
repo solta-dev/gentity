@@ -1,5 +1,7 @@
 package main
 
+import "flag"
+
 type entity struct {
 	GoName                         string
 	SQLName                        string
@@ -39,7 +41,11 @@ func newField() *field {
 	return &field{}
 }
 
+var singularTablesNames = flag.Bool("singular", false, "tables names is in singular form")
+
 func main() {
+	flag.Parse()
+
 	packageName, entities := parse()
 
 	generate(packageName, entities)
