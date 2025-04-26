@@ -9,6 +9,13 @@ import (
 
 type SomeInts int
 
+// type DBExecutorKey string
+// type DBExecutor interface {
+// 	Exec(ctx context.Context, sql string, arguments ...any) (commandTag pgconn.CommandTag, err error)
+// 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+// 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+// }
+
 const (
 	Int1 SomeInts = iota
 	Int2 SomeInts = iota

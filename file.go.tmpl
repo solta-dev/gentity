@@ -14,6 +14,8 @@ import (
     {{ end }}
 )
 
+const chunkSize = 1000
+
 type InsertOption struct {
 	ReturnAndUpdateVals bool
 	OnConflictStatement string
@@ -40,5 +42,5 @@ func fromContext(ctx context.Context) DBExecutor {
 }
 
 {{ range $entity := .Entities }}
-{{ $entity }}
+{{ template "entity.go.tmpl" $entity }}
 {{ end }}

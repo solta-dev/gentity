@@ -1,0 +1,14 @@
+
+{{ if .PrimaryKey }} {{ $primaryKey := index .UniqIndexes .PrimaryKey }}{{ $autoIncrementField := .AutoIncrementField }}
+func (e *{{ .GoName }}) Update(ctx context.Context) (err error) {
+	dbExecutor := fromContext(ctx)
+
+	sql := `UPDATE "{{ .SQLName }}" SET {{ range $i, $f := .FieldsExcludePrimaryKey }}{{ if $i }}, {{ end }}{{ $f.SQLName }} = ${{ add $i 1 }}{{ end }}	WHERE {{ range $i, $f := $primaryKey }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i (len $.FieldsExcludePrimaryKey) }}{{ end }}`
+	_, err = dbExecutor.Exec(ctx, sql, {{ range $i, $f := .FieldsExcludePrimaryKey }}e.{{ $f.GoName }}, {{ end }}{{ range $i, $f := $primaryKey }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }});
+    if err != nil {
+        err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
+    }
+
+	return
+}
+{{ end }}

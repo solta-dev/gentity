@@ -2,9 +2,8 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	_ "embed"
-	"go/parser"
-	"go/token"
 	"log"
 	"os"
 	"sort"
@@ -14,13 +13,9 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-var fileTmpl, entityTmpl *template.Template
-
-//go:embed file.go.tmpl
-var fileTmplContent []byte
-
-//go:embed entity.go.tmpl
-var entityTmplContent []byte
+//go:embed *.go.tmpl
+var templatesFS embed.FS
+var templates *template.Template
 
 func init() {
 	tmplFuncs := template.FuncMap{
@@ -36,24 +31,20 @@ func init() {
 		"exists":                   func(m map[string]any, key string) bool { _, ok := m[key]; return ok },
 	}
 
-	fileTmpl = template.Must(template.New("file").Funcs(tmplFuncs).Parse(string(fileTmplContent)))
-	entityTmpl = template.Must(template.New("entity").Funcs(tmplFuncs).Parse(string(entityTmplContent)))
+	templates = template.New("file.go.tmpl")
+	templates.Funcs(tmplFuncs)
+	if _, err := templates.ParseFS(templatesFS, "*.go.tmpl"); err != nil {
+		log.Fatalf("ParseFS: %v", err)
+	}
+
+	templates.Funcs(tmplFuncs)
 }
 
 func generate(packageName string, entities []entity) {
 	newFileName := "gentity.gen.go"
 
-	var entitiesCode []string
 	var imports map[string]struct{} = make(map[string]struct{})
 	for _, entity := range entities {
-
-		var buf bytes.Buffer
-		if err := entityTmpl.Execute(&buf, entity); err != nil {
-			log.Fatalf("Execute template: %v", err)
-		}
-
-		entitiesCode = append(entitiesCode, buf.String())
-
 		for _, field := range entity.Fields {
 			// Import field type need only if it used arguments of methods.
 			// This is one case: getters.
@@ -73,18 +64,17 @@ func generate(packageName string, entities []entity) {
 			}
 		}
 	}
-	sort.Strings(entitiesCode)
+	sort.Slice(entities, func(i, j int) bool {
+		return entities[i].GoName < entities[j].GoName
+	})
 
 	var buf bytes.Buffer
-	if err := fileTmpl.Execute(&buf, struct {
+	if err := templates.Execute(&buf, struct {
 		PackageName string
-		Entities    []string
+		Entities    []entity
 		Imports     []string
-	}{packageName, entitiesCode, maps.Keys(imports)}); err != nil {
+	}{packageName, entities, maps.Keys(imports)}); err != nil {
 		log.Fatalf("Execute template: %v", err)
-	}
-	if _, err := parser.ParseFile(token.NewFileSet(), newFileName, buf.Bytes(), parser.ParseComments); err != nil {
-		log.Fatalf("Parse template failed: %v; template below: %s", err, buf.String())
 	}
 
 	outFile, err := os.Create(newFileName)

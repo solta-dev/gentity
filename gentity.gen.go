@@ -12,6 +12,8 @@ import (
     
 )
 
+const chunkSize = 1000
+
 type InsertOption struct {
 	ReturnAndUpdateVals bool
 	OnConflictStatement string
@@ -35,7 +37,7 @@ func fromContext(ctx context.Context) DBExecutor {
 
 
 /********************************
- * Test autoincrement: {ID id uint64 false false [] [] 0 0 false [primary]}
+ * Test
  * 	ID uint64 id  <primary>   <autoincrement> 
  * 	IntA int int_a  
  * 	IntB SomeInts int_b  
@@ -50,6 +52,11 @@ func fromContext(ctx context.Context) DBExecutor {
  ********************************/
 
 type Tests []*Test
+
+type TestOrErr struct {
+    Entity *Test
+    Err error
+}
 
 func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
     dbExecutor := fromContext(ctx)
@@ -169,6 +176,255 @@ func (es Tests) Insert(ctx context.Context, insertOptions ...InsertOption) (err 
 	return
 }
 
+
+
+func (Test) Find(ctx context.Context, condition string, values []interface{}) (entities Tests, err error) {
+    return Test{}.Query(
+        ctx,
+        `SELECT id, int_a, int_b, str_a, time_a
+	    FROM "tests"
+	    WHERE ` + condition,
+        values,
+    )
+}
+
+func (Test) FindCh(ctx context.Context, condition string, values []interface{}) <-chan TestOrErr {
+    return Test{}.QueryCh(
+        ctx,
+        `SELECT id, int_a, int_b, str_a, time_a
+	    FROM "tests"
+	    WHERE ` + condition,
+        values,
+    )
+}
+
+func (Test) Query(ctx context.Context, sql string, values []interface{}) (entities Tests, err error) {
+
+    Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, e error) {
+        if e != nil {
+            err = e
+        } else if ent != nil {
+            entities = append(entities, ent)
+        }
+    })
+
+    return
+}
+
+func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interface{}, cb func(*Test, error)) {
+    dbExecutor := fromContext(ctx)
+
+    var rows pgx.Rows
+    var err error
+    rows, err = dbExecutor.Query(
+        ctx,
+        sql,
+        values...
+    )
+    defer func(){
+        rows.Close()
+        if err == nil {
+            err = rows.Err()
+        }
+        if err != nil {
+            if len(sql) > 500 {
+                sql = sql[:500] + "..."
+            }
+
+            err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
+        }
+
+        if err != nil {
+            cb(nil, err)
+        }
+        cb(nil, nil)
+    }()
+
+    if err != nil {
+        return
+    }
+
+    for rows.Next() {
+
+		e := Test{}
+
+		if err = rows.Scan(
+			&e.ID,
+			&e.IntA,
+			&e.IntB,
+			&e.StrA,
+			&e.TimeA,	
+		); err != nil {
+            return
+        }
+
+        cb(&e, nil)
+	}
+}
+
+func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) <-chan TestOrErr {
+    var ch = make(chan TestOrErr)
+    
+    go Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, err error) {
+        if err != nil {
+            ch <- TestOrErr{Err: err}
+        } else if ent != nil {
+            ch <- TestOrErr{Entity: ent}
+        } else {
+			close(ch)
+        }
+    })
+    
+    return ch
+}
+
+func (e Test) GetAll(ctx context.Context) (Tests, error) {
+	return e.Find(ctx, "1=1", []any{})
+}
+
+func (e Test) GetAllCh(ctx context.Context) <-chan TestOrErr {
+	return e.FindCh(ctx, "1=1", []any{})
+}
+
+ 
+func (e Test) GetByPrimary(ctx context.Context, id uint64) (*Test, error) {
+	es, err := e.Find(
+		ctx,
+		"id = $1",
+		[]any{ id },
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(es) == 1 {
+		return es[0], nil
+	}
+
+	return nil, nil
+}
+
+func (e Test) genFindQuery4MultiGetByPrimary(id []uint64) (sql string, params []any) {
+    sql = "id = any($1)"
+    params = []any{ id }
+    return
+}
+
+func (e Test) MultiGetByPrimary(ctx context.Context, id []uint64) (Tests, error) {
+    if len(id) > chunkSize {
+        return nil, fmt.Errorf("too many items in id (%d), please use MultiGetByPrimaryCh instead", len(id))
+    }
+    sql, params := e.genFindQuery4MultiGetByPrimary(id)
+	return e.Find(ctx, sql, params)
+}
+
+func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64) <-chan TestOrErr {
+    if len(id) > chunkSize {
+        ch := make(chan TestOrErr)
+
+        go func(){
+            for offset := 0; offset < len(id); offset += chunkSize {
+                limit := offset + chunkSize
+                if limit > len(id) {
+                    limit = len(id)
+                }
+
+                sql, params := e.genFindQuery4MultiGetByPrimary(id[offset:limit])
+                resCh := e.FindCh(ctx, sql, params)
+                for res := range resCh {
+                    ch <- res
+                    if res.Err != nil {
+                        close(ch)
+                        break
+                    }
+                }
+            }
+        }()
+
+        return ch
+    } else {
+        sql, params := e.genFindQuery4MultiGetByPrimary(id)
+        return e.FindCh(ctx, sql, params)
+    }
+}
+func (e Test) GetByTestStrA(ctx context.Context, strA string) (*Test, error) {
+	es, err := e.Find(
+		ctx,
+		"str_a = $1",
+		[]any{ strA },
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(es) == 1 {
+		return es[0], nil
+	}
+
+	return nil, nil
+}
+
+func (e Test) genFindQuery4MultiGetByTestStrA(strA []string) (sql string, params []any) {
+    sql = "str_a = any($1)"
+    params = []any{ strA }
+    return
+}
+
+func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) (Tests, error) {
+    if len(strA) > chunkSize {
+        return nil, fmt.Errorf("too many items in strA (%d), please use MultiGetByTestStrACh instead", len(strA))
+    }
+    sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
+	return e.Find(ctx, sql, params)
+}
+
+func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string) <-chan TestOrErr {
+    if len(strA) > chunkSize {
+        ch := make(chan TestOrErr)
+
+        go func(){
+            for offset := 0; offset < len(strA); offset += chunkSize {
+                limit := offset + chunkSize
+                if limit > len(strA) {
+                    limit = len(strA)
+                }
+
+                sql, params := e.genFindQuery4MultiGetByTestStrA(strA[offset:limit])
+                resCh := e.FindCh(ctx, sql, params)
+                for res := range resCh {
+                    ch <- res
+                    if res.Err != nil {
+                        close(ch)
+                        break
+                    }
+                }
+            }
+        }()
+
+        return ch
+    } else {
+        sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
+        return e.FindCh(ctx, sql, params)
+    }
+}
+
+ 
+func (e Test) GetByTestIntAIntB(ctx context.Context, intA int, intB SomeInts) (Tests, error) {
+	return e.Find(
+		ctx,
+		"int_a = $1 AND int_b = $2",
+		[]any{ intA, intB },
+	)
+}
+
+func (e Test) GetByTestIntAIntBCh(ctx context.Context, intA int, intB SomeInts) <-chan TestOrErr {
+	return e.FindCh(
+		ctx,
+		"int_a = $1 AND int_b = $2",
+		[]any{ intA, intB },
+	)
+}
+
+
+
  
 func (e *Test) Update(ctx context.Context) (err error) {
 	dbExecutor := fromContext(ctx)
@@ -182,6 +438,9 @@ func (e *Test) Update(ctx context.Context) (err error) {
 	return
 }
 
+
+
+ 
 func (e *Test) Delete(ctx context.Context) (err error) {
 	dbExecutor := fromContext(ctx)
 
@@ -206,7 +465,8 @@ func (es Tests) Delete(ctx context.Context) (err error) {
     var args []any
 
     for i, e := range es {
-        rowsSql[i] = fmt.Sprintf(`(id = $%d)`, i * 1 + 1)
+        rowsSql[i] = fmt.Sprintf(`(id = $%d)`,
+            i * 1 + 1)
         args = append(args, e.ID)
     }
 
@@ -221,240 +481,5 @@ func (es Tests) Delete(ctx context.Context) (err error) {
 }
 
 
-func (Test) Find(ctx context.Context, condition string, values []interface{}) (entities Tests, err error) {
-
-    return Test{}.Query(
-        ctx,
-        `SELECT id, int_a, int_b, str_a, time_a
-	    FROM "tests"
-	    WHERE ` + condition,
-        values,
-    )
-}
-
-func (Test) FindCh(ctx context.Context, condition string, values []interface{}, entitiesCh chan<- *Test, errCh chan<- error) {
-
-    Test{}.QueryCh(
-        ctx,
-        `SELECT id, int_a, int_b, str_a, time_a
-	    FROM "tests"
-	    WHERE ` + condition,
-        values,
-        entitiesCh,
-        errCh,
-    )
-}
-
-func (Test) Query(ctx context.Context, sql string, values []interface{}) (entities Tests, err error) {
-
-	dbExecutor := fromContext(ctx)
-
-	var rows pgx.Rows
-	rows, err = dbExecutor.Query(
-		ctx,
-		sql,
-		values...
-	)
-	defer func(){
-		rows.Close()
-		if err == nil {
-			err = rows.Err()
-		}
-		if err != nil {
-            if len(sql) > 500 {
-                sql = sql[:500] + "..."
-            }
-
-			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
-		}
-	}()
-
-	for rows.Next() {
-
-		e := Test{}
-
-		if err = rows.Scan(
-			&e.ID,
-			&e.IntA,
-			&e.IntB,
-			&e.StrA,
-			&e.TimeA,	
-		); err != nil {
-            return
-        }
-
-		entities = append(entities, &e)
-	}
-
-	return entities, nil
-}
-
-func (Test) QueryCh(ctx context.Context, sql string, values []interface{}, entitiesCh chan<- *Test, errCh chan<- error) {
-
-	var (
-		err error
-		rows pgx.Rows
-	)
-
-    defer func(){
-        if err != nil {
-            errCh <- err
-        }
-        close(errCh)
-        close(entitiesCh)
-    }()
-
-	dbExecutor := fromContext(ctx)
-
-	rows, err = dbExecutor.Query(ctx, sql, values...)
-	defer func(){
-		rows.Close()
-		if err == nil {
-			err = rows.Err()
-		}
-		if err != nil {
-			if len(sql) > 500 {
-				sql = sql[:500] + "..."
-			}
-
-			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
-		}
-	}()
-
-    if err != nil {
-        return
-    }
-
-    for rows.Next() {
-
-		e := Test{}
-
-		if err = rows.Scan(
-			&e.ID,
-			&e.IntA,
-			&e.IntB,
-			&e.StrA,
-			&e.TimeA,	
-		); err != nil {
-            errCh <- err
-            return
-        }
-
-		entitiesCh <- &e
-	}
-
-    return
-}
-
-func (e Test) GetAll(ctx context.Context) (Tests, error) {
-	return e.Find(ctx, "1=1", []any{})
-}
-
-func (e Test) GetAllCh(ctx context.Context, entitiesCh chan<- *Test, errCh chan<- error) {
-	e.FindCh(ctx, "1=1", []any{}, entitiesCh, errCh)
-}
-
- 
-func (e Test) GetByPrimary(ctx context.Context, id uint64) (*Test, error) {
-	es, err := e.Find(
-		ctx,
-		"id = $1",
-		[]any{ id },
-	)
-	if err != nil {
-		return nil, err
-	}
-	if len(es) == 1 {
-		return es[0], nil
-	}
-
-	return nil, nil
-}
-
-func (e Test) MultiGetByPrimary(ctx context.Context, id []uint64) (Tests, error) {
-	
-	var params []any = make([]any, 0, len(id) * 1)
-
-	where := make([]string, len(id))
-	for i := range id {
-		where[i] = fmt.Sprintf("(id = $%d)", 1 + i)
-		params = append(params, id[i])
-	}
-
-	return e.Find(ctx, strings.Join(where, " OR "), params)
-}
-
-func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64, entitiesCh chan<- *Test, errCh chan<- error) {
-	
-	var params []any = make([]any, 0, len(id) * 1)
-
-	where := make([]string, len(id))
-	for i := range id {
-		where[i] = fmt.Sprintf("(id = $%d)", 1 + i)
-		params = append(params, id[i])
-	}
-
-	e.FindCh(ctx, strings.Join(where, " OR "), params, entitiesCh, errCh)
-}
-func (e Test) GetByTestStrA(ctx context.Context, strA string) (*Test, error) {
-	es, err := e.Find(
-		ctx,
-		"str_a = $1",
-		[]any{ strA },
-	)
-	if err != nil {
-		return nil, err
-	}
-	if len(es) == 1 {
-		return es[0], nil
-	}
-
-	return nil, nil
-}
-
-func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) (Tests, error) {
-	
-	var params []any = make([]any, 0, len(strA) * 1)
-
-	where := make([]string, len(strA))
-	for i := range strA {
-		where[i] = fmt.Sprintf("(str_a = $%d)", 1 + i)
-		params = append(params, strA[i])
-	}
-
-	return e.Find(ctx, strings.Join(where, " OR "), params)
-}
-
-func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string, entitiesCh chan<- *Test, errCh chan<- error) {
-	
-	var params []any = make([]any, 0, len(strA) * 1)
-
-	where := make([]string, len(strA))
-	for i := range strA {
-		where[i] = fmt.Sprintf("(str_a = $%d)", 1 + i)
-		params = append(params, strA[i])
-	}
-
-	e.FindCh(ctx, strings.Join(where, " OR "), params, entitiesCh, errCh)
-}
-
- 
-func (e Test) GetByTestIntAIntB(ctx context.Context, intA int, intB SomeInts) (Tests, error) {
-	return e.Find(
-		ctx,
-		"int_a = $1 AND int_b = $2",
-		[]any{ intA, intB },
-	)
-}
-
-func (e Test) GetByTestIntAIntBCh(ctx context.Context, intA int, intB SomeInts, entitiesCh chan<- *Test, errCh chan<- error) {
-	e.FindCh(
-		ctx,
-		"int_a = $1 AND int_b = $2",
-		[]any{ intA, intB },
-		entitiesCh,
-		errCh,
-	)
-}
 
 

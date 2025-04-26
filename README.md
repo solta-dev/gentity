@@ -72,6 +72,8 @@ fmt.Println("Id of new item is ", e.ID)
 
 * ~~Tests~~
 * ~~Multi-row insert and delete~~
+* Chunked queries by long arrays
+* Change interface to .All() and .One for get resultset instead of channel use (or not because of with channels we can use select{} for read results simultaneous with other jobs)
 * On conflict clause in multi row insert
 * Custom returns clause in multi row insert
 * Fetchers by begin of tree-indexes

@@ -58,14 +58,14 @@ func TestMain(t *testing.T) {
 		"--env", "POSTGRES_PASSWORD=gentity",
 		"--env", "POSTGRES_USER=gentity",
 		"--env", "POSTGRES_DB=gentity",
-		"--memory", "100M", "--publish", fmt.Sprintf("%d:5432", pgPort),
+		"--memory", "100Mb", "--publish", fmt.Sprintf("%d:5432", pgPort),
 		"--rm",
 		"postgres:15",
 	)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println("started docker", cmd.Process.Pid)
+	t.Log("started docker", cmd.Process.Pid)
 	defer func() {
 		if err := syscall.Kill(cmd.Process.Pid, syscall.SIGINT); err != nil {
 			t.Fatal(err)
@@ -159,24 +159,21 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
-	var (
-		esCh  chan *Test
-		errCh chan error
-	)
-
 	// Get all via channel
 	es = []*Test{}
-	esCh = make(chan *Test)
-	errCh = make(chan error)
-	go Test{}.GetAllCh(ctx, esCh, errCh)
-	for e := range esCh {
-		es = append(es, e)
+	t.Log("Get all via channel")
+	esCh := Test{}.GetAllCh(ctx)
+	t.Log("Get all via channel 2")
+	for r := range esCh {
+		t.Logf("Get all via channel 3: %v", r)
+		if r.Err != nil {
+			t.Error(r.Err)
+		} else {
+			es = append(es, r.Entity)
+		}
 	}
 	if diff := deep.Equal(es, Tests{&e1, &e2, &e3}); diff != nil {
 		t.Error(diff)
-	}
-	if err = <-errCh; err != nil {
-		t.Error(err)
 	}
 
 	// Return and update vals
@@ -218,17 +215,16 @@ func TestMain(t *testing.T) {
 
 	// Get by non unique index via channel
 	e23 = []*Test{}
-	esCh = make(chan *Test)
-	errCh = make(chan error)
-	go Test{}.GetByTestIntAIntBCh(ctx, 2, 2, esCh, errCh)
-	for e := range esCh {
-		e23 = append(e23, e)
+	esCh = Test{}.GetByTestIntAIntBCh(ctx, 2, 2)
+	for r := range esCh {
+		if r.Err != nil {
+			t.Error(r.Err)
+		} else {
+			e23 = append(e23, r.Entity)
+		}
 	}
 	if diff := deep.Equal(e23, Tests{&e2, &e3}); diff != nil {
 		t.Error(diff)
-	}
-	if err = <-errCh; err != nil {
-		t.Error(err)
 	}
 
 	// Get by unique index
@@ -254,20 +250,19 @@ func TestMain(t *testing.T) {
 	}
 
 	e12 = []*Test{}
-	esCh = make(chan *Test)
-	errCh = make(chan error)
-	go Test{}.MultiGetByPrimaryCh(ctx, []uint64{1, 2}, esCh, errCh)
-	for e := range esCh {
-		e12 = append(e12, e)
+	esCh = Test{}.MultiGetByPrimaryCh(ctx, []uint64{1, 2})
+	for r := range esCh {
+		if r.Err != nil {
+			t.Error(r.Err)
+		} else {
+			e12 = append(e12, r.Entity)
+		}
 	}
 	if e12[0].ID > e12[1].ID {
 		e12[0], e12[1] = e12[1], e12[0]
 	}
 	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
 		t.Error(diff)
-	}
-	if err = <-errCh; err != nil {
-		t.Error(err)
 	}
 
 	e12, err = Test{}.MultiGetByTestStrA(ctx, []string{"a", "b"})
@@ -282,20 +277,19 @@ func TestMain(t *testing.T) {
 	}
 
 	e12 = []*Test{}
-	esCh = make(chan *Test)
-	errCh = make(chan error)
-	go Test{}.MultiGetByTestStrACh(ctx, []string{"a", "b"}, esCh, errCh)
-	for e := range esCh {
-		e12 = append(e12, e)
+	esCh = Test{}.MultiGetByTestStrACh(ctx, []string{"a", "b"})
+	for r := range esCh {
+		if r.Err != nil {
+			t.Error(r.Err)
+		} else {
+			e12 = append(e12, r.Entity)
+		}
 	}
 	if e12[0].ID > e12[1].ID {
 		e12[0], e12[1] = e12[1], e12[0]
 	}
 	if diff := deep.Equal(e12, Tests{e1fromDB, &e2}); diff != nil {
 		t.Error(diff)
-	}
-	if err = <-errCh; err != nil {
-		t.Error(err)
 	}
 
 	// Update

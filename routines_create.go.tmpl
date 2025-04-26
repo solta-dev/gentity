@@ -1,0 +1,125 @@
+func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
+    dbExecutor := fromContext(ctx)
+    var sql, returning string
+    var args []any
+
+    {{ if .AutoIncrementField }}if e.{{ .AutoIncrementField.GoName }} == 0 {
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
+        VALUES ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+        returning = ` RETURNING {{ .AutoIncrementField.SQLName }}`
+        args = []any{ {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+    } else {
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
+        VALUES ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+        args = []any{ {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+    }{{ else }}
+    sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
+    VALUES ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+    args = []any{ {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+    {{ end }}
+
+    var returnAndUpdateVals bool
+	for _, opt := range insertOptions {
+		if opt.ReturnAndUpdateVals {
+			returnAndUpdateVals = true
+		}
+		if opt.OnConflictStatement != "" {
+			sql += " ON CONFLICT "+ opt.OnConflictStatement
+		}
+	}
+    
+    if returnAndUpdateVals {
+        returning = ` RETURNING {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}`
+    }
+    if returning != "" {
+        sql += returning
+    }
+
+	var rows pgx.Rows
+	rows, err = dbExecutor.Query(ctx, sql, args...)
+	defer func(){
+		rows.Close()
+		if err == nil {
+			err = rows.Err()
+		}
+		if err != nil {
+			err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
+		}
+	}()
+
+    if returnAndUpdateVals {
+		if ! rows.Next() {
+            // TODO: on conflict do nothing case
+            return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
+        }
+
+        if err = rows.Scan(
+			{{- range $i, $f := .Fields }}
+			&e.{{ $f.GoName }},
+			{{- end }}
+		); err != nil {
+            return
+        }
+    }{{ if .AutoIncrementField }} else if e.{{ .AutoIncrementField.GoName }} == 0 {
+        if ! rows.Next() {
+            // TODO: on conflict do nothing case
+            return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
+        }
+
+        if err = rows.Scan(&e.{{ .AutoIncrementField.GoName }}); err != nil {
+            return
+        }
+    }{{ end }}
+
+	return nil
+}
+
+func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
+	dbExecutor := fromContext(ctx)
+    var sql string
+    var sqlRows []string
+    var args []any
+
+    if len(es) == 0 {
+        return nil
+    }
+
+    {{ if .AutoIncrementField }}if es[0].{{ .AutoIncrementField.GoName }} == 0 {
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ .AutoIncrementField.SQLName }}{{ range $i, $f := .FieldsExcludeAutoIncrement }}, {{ $f.SQLName }}{{ end }}) VALUES `
+        for i, e := range es {
+            sqlRows = append(sqlRows, fmt.Sprintf(`(DEFAULT{{ range $i, $f := .FieldsExcludeAutoIncrement }}, $%d{{ end }})`{{ range $i, $f := .FieldsExcludeAutoIncrement }}, i * {{ len $.FieldsExcludeAutoIncrement }} + {{ add $i 1 }}{{ end }}))
+            args = append(args, {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
+        }
+    } else {
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}) VALUES `
+        for i, e := range es {
+            sqlRows = append(sqlRows, fmt.Sprintf(`({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}$%d{{ end }})`{{ range $i, $f := .Fields }}, i * {{ len $.Fields }} + {{ add $i 1 }}{{ end }}))
+            args = append(args, {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
+        }
+    }{{ else }}
+    sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}) VALUES `
+    for i, e := range es {
+        sqlRows = append(sqlRows, fmt.Sprintf(`({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}$%d{{ end }})`{{ range $i, $f := .Fields }}, i * {{ len $.Fields }} + {{ add $i 1 }}{{ end }}))
+        args = append(args, {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
+    }
+    {{ end }}
+
+    sql += strings.Join(sqlRows, ", ")
+
+	for _, opt := range insertOptions {
+		if opt.ReturnAndUpdateVals {
+			err = fmt.Errorf("ReturnAndUpdateVals option is not supported for multi-insert now")
+            return
+		}
+		if opt.OnConflictStatement != "" {
+			sql += " ON CONFLICT "+ opt.OnConflictStatement
+		}
+	}
+
+	_, err = dbExecutor.Exec(ctx, sql, args...)
+    if err != nil {
+        err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
+    }
+
+	return
+}

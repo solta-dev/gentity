@@ -1,0 +1,204 @@
+
+func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interface{}) (entities {{ .GoName }}s, err error) {
+    return {{ .GoName }}{}.Query(
+        ctx,
+        `SELECT {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}
+	    FROM "{{ .SQLName }}"
+	    WHERE ` + condition,
+        values,
+    )
+}
+
+func ({{ .GoName }}) FindCh(ctx context.Context, condition string, values []interface{}) <-chan {{ .GoName }}OrErr {
+    return {{ .GoName }}{}.QueryCh(
+        ctx,
+        `SELECT {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}
+	    FROM "{{ .SQLName }}"
+	    WHERE ` + condition,
+        values,
+    )
+}
+
+func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}) (entities {{ .GoName }}s, err error) {
+
+    {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, func(ent *{{ .GoName }}, e error) {
+        if e != nil {
+            err = e
+        } else if ent != nil {
+            entities = append(entities, ent)
+        }
+    })
+
+    return
+}
+
+func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values []interface{}, cb func(*{{ .GoName }}, error)) {
+    dbExecutor := fromContext(ctx)
+
+    var rows pgx.Rows
+    var err error
+    rows, err = dbExecutor.Query(
+        ctx,
+        sql,
+        values...
+    )
+    defer func(){
+        rows.Close()
+        if err == nil {
+            err = rows.Err()
+        }
+        if err != nil {
+            if len(sql) > 500 {
+                sql = sql[:500] + "..."
+            }
+
+            err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
+        }
+
+        if err != nil {
+            cb(nil, err)
+        }
+        cb(nil, nil)
+    }()
+
+    if err != nil {
+        return
+    }
+
+    for rows.Next() {
+
+		e := {{ .GoName }}{}
+
+		if err = rows.Scan(
+			{{- range $i, $f := .Fields }}
+			&e.{{ $f.GoName }},
+			{{- end }}	
+		); err != nil {
+            return
+        }
+
+        cb(&e, nil)
+	}
+}
+
+func ({{ .GoName }}) QueryCh(ctx context.Context, sql string, values []interface{}) <-chan {{ .GoName }}OrErr {
+    var ch = make(chan {{ .GoName }}OrErr)
+    
+    go {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, func(ent *{{ .GoName }}, err error) {
+        if err != nil {
+            ch <- {{ .GoName }}OrErr{Err: err}
+        } else if ent != nil {
+            ch <- {{ .GoName }}OrErr{Entity: ent}
+        } else {
+			close(ch)
+        }
+    })
+    
+    return ch
+}
+
+func (e {{ .GoName }}) GetAll(ctx context.Context) ({{ .GoName }}s, error) {
+	return e.Find(ctx, "1=1", []any{})
+}
+
+func (e {{ .GoName }}) GetAllCh(ctx context.Context) <-chan {{ .GoName }}OrErr {
+	return e.FindCh(ctx, "1=1", []any{})
+}
+
+{{ if len .UniqIndexes }} {{ $entityGoName := .GoName }}
+	{{- range $n, $idx := .UniqIndexes }}
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) (*{{ $entityGoName }}, error) {
+	es, err := e.Find(
+		ctx,
+		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
+		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(es) == 1 {
+		return es[0], nil
+	}
+
+	return nil, nil
+}
+
+func (e {{ $entityGoName }}) genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) (sql string, params []any) {
+    {{- if eq (len $idx) 1 }}
+    sql = "{{ (index $idx 0).SQLName }} = any($1)"
+    params = []any{ {{ snake_case_to_camel_case (index $idx 0).SQLName false }} }
+    {{- else -}}
+    {{ $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
+    var params []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
+
+    where := make([]string, len({{ $firstParam }}))
+    for i := range {{ $firstParam }} {
+        where[i] = fmt.Sprintf("({{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = $%d{{ end }})"{{ range $i, $f := $idx }}, {{ add 1 $i }} + i{{ end }})
+        params = append(params, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ end }})
+    }
+    sql = strings.Join(where, " OR ")
+    {{- end }}
+    return
+}
+
+func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
+    {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
+    if len({{ $firstParam }}) > chunkSize {
+        return nil, fmt.Errorf("too many items in {{ $firstParam }} (%d), please use MultiGetBy{{ snake_case_to_camel_case $n true }}Ch instead", len({{ $firstParam }}))
+    }
+    sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
+	return e.Find(ctx, sql, params)
+}
+
+func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) <-chan {{ $entityGoName }}OrErr {
+    {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
+    if len({{ $firstParam }}) > chunkSize {
+        ch := make(chan {{ $entityGoName }}OrErr)
+
+        go func(){
+            for offset := 0; offset < len({{ $firstParam }}); offset += chunkSize {
+                limit := offset + chunkSize
+                if limit > len({{ $firstParam }}) {
+                    limit = len({{ $firstParam }})
+                }
+
+                sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[offset:limit]{{ end }})
+                resCh := e.FindCh(ctx, sql, params)
+                for res := range resCh {
+                    ch <- res
+                    if res.Err != nil {
+                        close(ch)
+                        break
+                    }
+                }
+            }
+        }()
+
+        return ch
+    } else {
+        sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
+        return e.FindCh(ctx, sql, params)
+    }
+}
+	{{- end }}
+{{- end }}
+
+{{if len .NonUniqIndexes }} {{ $entityGoName := .GoName }}
+	{{- range $n, $idx := .NonUniqIndexes }}
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
+	return e.Find(
+		ctx,
+		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
+		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },
+	)
+}
+
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) <-chan {{ $entityGoName }}OrErr {
+	return e.FindCh(
+		ctx,
+		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
+		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },
+	)
+}
+	{{- end }}
+{{- end }}
