@@ -28,7 +28,11 @@ type DBExecutor interface {
 type DBExecutorKey string
 
 func fromContext(ctx context.Context) DBExecutor {
-    dbe, ok := ctx.Value(DBExecutorKey("dbExecutor")).(DBExecutor)
+    dbExecutorVal := ctx.Value(DBExecutorKey("dbExecutor"))
+    if dbExecutorVal == nil {
+        dbExecutorVal = ctx.Value("dbExecutor")
+    }
+    dbe, ok := dbExecutorVal.(DBExecutor)
     if !ok {
         panic("DBExecutor not found in context")
     }
@@ -102,6 +106,9 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
 			err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
 		}
 	}()
+    if err != nil {
+        return
+    }
 
     if returnAndUpdateVals {
 		if ! rows.Next() {

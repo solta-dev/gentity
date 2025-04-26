@@ -46,6 +46,9 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
 			err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
 		}
 	}()
+    if err != nil {
+        return
+    }
 
     if returnAndUpdateVals {
 		if ! rows.Next() {
