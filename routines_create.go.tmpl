@@ -53,6 +53,9 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
     if returnAndUpdateVals {
 		if ! rows.Next() {
             // TODO: on conflict do nothing case
+            if err = rows.Err(); err != nil {
+                return
+            }
             return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
         }
 
@@ -66,6 +69,9 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
     }{{ if .AutoIncrementField }} else if e.{{ .AutoIncrementField.GoName }} == 0 {
         if ! rows.Next() {
             // TODO: on conflict do nothing case
+            if err = rows.Err(); err != nil {
+                return
+            }
             return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
         }
 

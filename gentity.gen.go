@@ -113,6 +113,9 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
     if returnAndUpdateVals {
 		if ! rows.Next() {
             // TODO: on conflict do nothing case
+            if err = rows.Err(); err != nil {
+                return
+            }
             return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
         }
 
@@ -128,6 +131,9 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
     } else if e.ID == 0 {
         if ! rows.Next() {
             // TODO: on conflict do nothing case
+            if err = rows.Err(); err != nil {
+                return
+            }
             return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
         }
 
