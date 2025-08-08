@@ -205,6 +205,15 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 			fld.GoType = e.(*ast.Ident).Name
 			fld.Num = len(ent.Fields)
 			procFieldTag(f, ent, fld)
+
+			if st, ok := sm[id.Name]; ok {
+				for _, f := range st.structType.Fields.List {
+					if newTag(f.Tag.Value, "json") != nil {
+						fld.IsJson = true
+					}
+				}
+			}
+
 			ent.Fields = append(ent.Fields, fld)
 		}
 	case *ast.SelectorExpr:
@@ -319,6 +328,13 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 			if e.AutoIncrementField.GoName != f.GoName {
 				e.FieldsExcludeAutoIncrement = append(e.FieldsExcludeAutoIncrement, f)
 			}
+		}
+	}
+
+	e.JsonFields = make([]*field, 0, len(e.FieldsExcludeAutoIncrement))
+	for _, f := range e.FieldsExcludeAutoIncrement {
+		if f.IsJson {
+			e.JsonFields = append(e.JsonFields, f)
 		}
 	}
 

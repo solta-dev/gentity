@@ -1,4 +1,4 @@
-![](https://img.shields.io/static/v1?label=Coverage&message=81.4%&color=green)
+![](https://img.shields.io/static/v1?label=Coverage&message=75.8%&color=green)
 
 # Gentity - is a codegen simple entity layer implementation 
 
@@ -16,6 +16,7 @@ Implemented methods with database calls via [github.com/jackc/pgx/v5](https://gi
 - [x] Fetch row by all values of unique index
 - [x] Fetch rows by all values of non-unique index
 - [x] Fetch rows via channel
+- [x] Json struct in field (excluding indexed fields)
 
 Update and Delete methods use primary key fields as arguments.
 
@@ -44,6 +45,7 @@ type Test struct {
 	IntB  SomeInts  `gentity:"index=test_int_a_int_b"`
 	StrA  string    `gentity:"unique=test_str_a"`
 	TimeA time.Time `gentity:""`
+    Json  jsonType  `gentity:""`
 }
 ```
 

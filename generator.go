@@ -40,7 +40,7 @@ func init() {
 	templates.Funcs(tmplFuncs)
 }
 
-func generate(packageName string, entities []entity) {
+func generate(packageName string, entities []entity) string {
 	newFileName := "gentity.gen.go"
 
 	var imports map[string]struct{} = make(map[string]struct{})
@@ -62,6 +62,10 @@ func generate(packageName string, entities []entity) {
 			} else {
 				imports[t[0]] = struct{}{}
 			}
+		}
+
+		if entity.JsonFields != nil {
+			imports["encoding/json"] = struct{}{}
 		}
 	}
 	sort.Slice(entities, func(i, j int) bool {
@@ -85,4 +89,6 @@ func generate(packageName string, entities []entity) {
 	if _, err := outFile.WriteString(buf.String()); err != nil {
 		log.Fatalf("Failed to write generated file %s: %v", newFileName, err)
 	}
+
+	return newFileName
 }

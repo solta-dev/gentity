@@ -1,6 +1,9 @@
 package main
 
-import "flag"
+import (
+	"flag"
+	"os/exec"
+)
 
 type entity struct {
 	GoName                         string
@@ -8,6 +11,7 @@ type entity struct {
 	Fields                         []*field
 	FieldsExcludePrimaryKey        []*field
 	FieldsExcludeAutoIncrement     []*field
+	JsonFields                     []*field
 	PrimaryKey                     string
 	UniqIndexes                    map[string][]*field
 	NonUniqIndexes                 map[string][]*field
@@ -29,6 +33,7 @@ type field struct {
 	GoType       string
 	IsRef        bool
 	IsArray      bool
+	IsJson       bool
 	OpeningEmbed []string
 	ClosingEmbed []string
 	EmbedLevel   int
@@ -48,5 +53,9 @@ func main() {
 
 	packageName, entities := parse()
 
-	generate(packageName, entities)
+	filename := generate(packageName, entities)
+
+	if err := exec.Command("go", "fmt", filename).Run(); err != nil {
+		panic(err)
+	}
 }
