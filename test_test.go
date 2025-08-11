@@ -125,12 +125,12 @@ func TestMain(t *testing.T) {
 	t1 := time.Now().Truncate(time.Microsecond).UTC()
 
 	// Simple insert
-	e1 := Test{IntA: 1, IntB: 1, StrA: "a", TimeA: t1}
+	e1 := Test{IntA: 1, IntB: 1, StrA: "a", TimeA: t1, Json: jsonType{Str: "lalala", Int: 999}}
 	if err = e1.Insert(ctx); err != nil {
 		t.Error(err)
 	}
 	// Auto get id
-	if diff := deep.Equal(e1, Test{ID: 1, IntA: 1, IntB: 1, StrA: "a", TimeA: t1}); diff != nil {
+	if diff := deep.Equal(e1, Test{ID: 1, IntA: 1, IntB: 1, StrA: "a", TimeA: t1, Json: jsonType{Str: "lalala", Int: 999}}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -200,7 +200,7 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if diff := deep.Equal(*e1fromDB, Test{ID: e1.ID, IntA: 6, IntB: 1, StrA: "a", TimeA: t1}); diff != nil {
+	if diff := deep.Equal(*e1fromDB, Test{ID: e1.ID, IntA: 6, IntB: 1, StrA: "a", TimeA: t1, Json: jsonType{Str: "lalala", Int: 999}}); diff != nil {
 		t.Error(diff)
 	}
 
@@ -302,7 +302,7 @@ func TestMain(t *testing.T) {
 		t.Error(err)
 	}
 	// IntA == 1 because of gentity updates all fields, not changed only.
-	if diff := deep.Equal(*e1fromDB, Test{ID: 1, IntA: 1, IntB: 111, StrA: "a", TimeA: t1}); diff != nil {
+	if diff := deep.Equal(*e1fromDB, Test{ID: 1, IntA: 1, IntB: 111, StrA: "a", TimeA: t1, Json: jsonType{Str: "lalala", Int: 999}}); diff != nil {
 		t.Error(diff)
 	}
 

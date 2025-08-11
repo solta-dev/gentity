@@ -54,28 +54,41 @@ func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values [
 
             err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
         }
-
-        if err != nil {
-            cb(nil, err)
-        }
-        cb(nil, nil)
+        cb(nil, err) // call with nil,nil - is for empty result
     }()
 
     if err != nil {
         return
     }
 
+    {{ if .JsonFields }}
+        var {{ range $i, $f := .JsonFields }}{{ if $i }}, {{ end }}{{ $f.GoName }}Buf{{ end }} []byte
+    {{ end }}
+
     for rows.Next() {
 
 		e := {{ .GoName }}{}
 
 		if err = rows.Scan(
-			{{- range $i, $f := .Fields }}
-			&e.{{ $f.GoName }},
-			{{- end }}	
+			{{- range $i, $f := .Fields -}}
+                &
+                {{- if $f.IsJson -}}
+                    {{- $f.GoName }}Buf
+                {{- else -}}
+                    e.{{ $f.GoName -}}
+                {{- end -}},
+			{{- end -}}	
 		); err != nil {
             return
         }
+
+        {{ range $i, $f := .JsonFields -}}
+            if err = json.Unmarshal({{ $f.GoName }}Buf, &e.{{ $f.GoName }}); err != nil {
+                cb(nil, fmt.Errorf("failed to unmarshal {{ $f.GoName }} field: %w", err))
+                return
+            }
+        {{- end }}
+
 
         cb(&e, nil)
 	}
@@ -105,81 +118,88 @@ func (e {{ .GoName }}) GetAllCh(ctx context.Context) <-chan {{ .GoName }}OrErr {
 	return e.FindCh(ctx, "1=1", []any{})
 }
 
-{{ if len .UniqIndexes }} {{ $entityGoName := .GoName }}
+{{ if len .UniqIndexes -}}
+    {{- $entityGoName := .GoName -}}
 	{{- range $n, $idx := .UniqIndexes }}
-func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) (*{{ $entityGoName }}, error) {
-	es, err := e.Find(
-		ctx,
-		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
-		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },
-	)
-	if err != nil {
-		return nil, err
-	}
-	if len(es) == 1 {
-		return es[0], nil
-	}
-
-	return nil, nil
-}
-
-func (e {{ $entityGoName }}) genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) (sql string, params []any) {
-    {{- if eq (len $idx) 1 }}
-    sql = "{{ (index $idx 0).SQLName }} = any($1)"
-    params = []any{ {{ snake_case_to_camel_case (index $idx 0).SQLName false }} }
-    {{- else -}}
-    {{ $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
-    var params []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
-
-    where := make([]string, len({{ $firstParam }}))
-    for i := range {{ $firstParam }} {
-        where[i] = fmt.Sprintf("({{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = $%d{{ end }})"{{ range $i, $f := $idx }}, {{ add 1 $i }} + i{{ end }})
-        params = append(params, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ end }})
-    }
-    sql = strings.Join(where, " OR ")
-    {{- end }}
-    return
-}
-
-func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
-    {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
-    if len({{ $firstParam }}) > chunkSize {
-        return nil, fmt.Errorf("too many items in {{ $firstParam }} (%d), please use MultiGetBy{{ snake_case_to_camel_case $n true }}Ch instead", len({{ $firstParam }}))
-    }
-    sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
-	return e.Find(ctx, sql, params)
-}
-
-func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) <-chan {{ $entityGoName }}OrErr {
-    {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
-    if len({{ $firstParam }}) > chunkSize {
-        ch := make(chan {{ $entityGoName }}OrErr)
-
-        go func(){
-            for offset := 0; offset < len({{ $firstParam }}); offset += chunkSize {
-                limit := offset + chunkSize
-                if limit > len({{ $firstParam }}) {
-                    limit = len({{ $firstParam }})
-                }
-
-                sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[offset:limit]{{ end }})
-                resCh := e.FindCh(ctx, sql, params)
-                for res := range resCh {
-                    ch <- res
-                    if res.Err != nil {
-                        close(ch)
-                        break
-                    }
-                }
+        func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) (*{{ $entityGoName }}, error) {
+            es, err := e.Find(ctx, "
+                    {{- range $i, $f := $idx -}}
+                        {{- if $i -}} AND {{- end -}}
+                        {{- $f.SQLName -}} = ${{- add 1 $i -}}
+                    {{- end -}}
+                ", []any{
+                    {{- range $i, $f := $idx -}}
+                        {{- if $i -}}, {{- end -}}
+                        {{- snake_case_to_camel_case $f.SQLName false -}}
+                    {{- end -}}
+                })
+            if err != nil {
+                return nil, err
             }
-        }()
+            if len(es) == 1 {
+                return es[0], nil
+            }
 
-        return ch
-    } else {
-        sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
-        return e.FindCh(ctx, sql, params)
-    }
-}
+            return nil, nil
+        }
+
+        func (e {{ $entityGoName }}) genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) (sql string, params []any) {
+            {{- if eq (len $idx) 1 }}
+                sql = "{{ (index $idx 0).SQLName }} = any($1)"
+                params = []any{ {{ snake_case_to_camel_case (index $idx 0).SQLName false }} }
+            {{- else -}}
+                {{ $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
+                var params []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
+
+                where := make([]string, len({{ $firstParam }}))
+                for i := range {{ $firstParam }} {
+                    where[i] = fmt.Sprintf("({{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = $%d{{ end }})"{{ range $i, $f := $idx }}, {{ add 1 $i }} + i{{ end }})
+                    params = append(params, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ end }})
+                }
+                sql = strings.Join(where, " OR ")
+            {{- end }}
+            return
+        }
+
+        func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
+            {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
+            if len({{ $firstParam }}) > chunkSize {
+                return nil, fmt.Errorf("too many items in {{ $firstParam }} (%d), please use MultiGetBy{{ snake_case_to_camel_case $n true }}Ch instead", len({{ $firstParam }}))
+            }
+            sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
+            return e.Find(ctx, sql, params)
+        }
+
+        func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) <-chan {{ $entityGoName }}OrErr {
+            {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
+            if len({{ $firstParam }}) > chunkSize {
+                ch := make(chan {{ $entityGoName }}OrErr)
+
+                go func(){
+                    for offset := 0; offset < len({{ $firstParam }}); offset += chunkSize {
+                        limit := offset + chunkSize
+                        if limit > len({{ $firstParam }}) {
+                            limit = len({{ $firstParam }})
+                        }
+
+                        sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[offset:limit]{{ end }})
+                        resCh := e.FindCh(ctx, sql, params)
+                        for res := range resCh {
+                            ch <- res
+                            if res.Err != nil {
+                                close(ch)
+                                break
+                            }
+                        }
+                    }
+                }()
+
+                return ch
+            } else {
+                sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
+                return e.FindCh(ctx, sql, params)
+            }
+        }
 	{{- end }}
 {{- end }}
 

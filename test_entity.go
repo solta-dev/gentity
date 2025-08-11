@@ -22,6 +22,11 @@ const (
 	Int3 SomeInts = iota
 )
 
+type jsonType struct {
+	Str string `json:"str"`
+	Int int    `json:"int"`
+}
+
 // gentity
 type Test struct {
 	ID    uint64    `gentity:"unique=primary autoincrement"`
@@ -29,6 +34,7 @@ type Test struct {
 	IntB  SomeInts  `gentity:"index=test_int_a_int_b"`
 	StrA  string    `gentity:"unique=test_str_a"`
 	TimeA time.Time `gentity:""`
+	Json  jsonType  `gentity:""`
 }
 
 func (Test) createTable(ctx context.Context) error {
@@ -39,7 +45,8 @@ func (Test) createTable(ctx context.Context) error {
 		int_a integer NOT NULL,
 		int_b integer NOT NULL,
 		str_a varchar(256) NOT NULL,
-		time_a timestamp NOT NULL DEFAULT now()
+		time_a timestamp NOT NULL DEFAULT now(),
+		json jsonb NOT NULL DEFAULT '{}'::jsonb
 	)`); err != nil {
 		return err
 	}

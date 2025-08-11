@@ -3,8 +3,23 @@
 func (e *{{ .GoName }}) Update(ctx context.Context) (err error) {
 	dbExecutor := fromContext(ctx)
 
+    {{ if .JsonFields -}}
+        var {{ range $i, $f := .JsonFields }}{{ if $i }}, {{ end }}{{ $f.GoName }}Buf{{ end }} []byte
+    {{- end }}
+
 	sql := `UPDATE "{{ .SQLName }}" SET {{ range $i, $f := .FieldsExcludePrimaryKey }}{{ if $i }}, {{ end }}{{ $f.SQLName }} = ${{ add $i 1 }}{{ end }}	WHERE {{ range $i, $f := $primaryKey }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i (len $.FieldsExcludePrimaryKey) }}{{ end }}`
-	_, err = dbExecutor.Exec(ctx, sql, {{ range $i, $f := .FieldsExcludePrimaryKey }}e.{{ $f.GoName }}, {{ end }}{{ range $i, $f := $primaryKey }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }});
+
+    {{ range $i, $f := .JsonFields -}}
+        if {{ $f.GoName }}Buf, err = json.Marshal(e.{{ $f.GoName }}); err != nil {
+            return fmt.Errorf("failed to marshal {{ $f.GoName }} field: %w", err)
+        }
+    {{- end }}
+
+	_, err = dbExecutor.Exec(ctx, sql,
+        {{- range $i, $f := .FieldsExcludePrimaryKey -}}
+            {{- if $f.IsJson -}}string({{- $f.GoName -}}Buf){{- else -}}e.{{- $f.GoName -}}{{- end -}},
+        {{- end -}}
+        {{- range $i, $f := $primaryKey }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end -}});
     if err != nil {
         err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
     }

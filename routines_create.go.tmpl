@@ -1,21 +1,37 @@
 func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
     dbExecutor := fromContext(ctx)
     var sql, returning string
-    var args []any
+    args := make([]any, 0, {{ len .Fields }})
+
+    {{ if .JsonFields }}
+        var {{ range $i, $f := .JsonFields }}{{ if $i }}, {{ end }}{{ $f.GoName }}Buf{{ end }} []byte
+        {{ range $i, $f := .JsonFields -}}
+            if {{ $f.GoName }}Buf, err = json.Marshal(e.{{ $f.GoName }}); err != nil {
+                return fmt.Errorf("failed to marshal {{ $f.GoName }} field: %w", err)
+            }
+        {{- end -}}
+    {{ end }}
 
     {{ if .AutoIncrementField }}if e.{{ .AutoIncrementField.GoName }} == 0 {
-        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
-        VALUES ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ $f.SQLName }}, {{ end }}{{ .AutoIncrementField.SQLName }})
+            VALUES ({{ range $i, $f := .FieldsExcludeAutoIncrement }}${{ add $i 1 }}, {{ end }}DEFAULT)`
         returning = ` RETURNING {{ .AutoIncrementField.SQLName }}`
-        args = []any{ {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+        args = []any{ {{ range $i, $f := .FieldsExcludeAutoIncrement -}}
+            {{- if $i }}, {{ end -}}
+            {{- if $f.IsJson -}}
+                string({{ $f.GoName }}Buf)
+            {{- else -}}
+                e.{{ $f.GoName }}
+            {{- end -}}
+        {{- end -}} }
     } else {
-        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
-        VALUES ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
-        args = []any{ {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ $f.SQLName }}, {{ end }}{{ .AutoIncrementField.SQLName }})
+            VALUES ({{ range $i, $f := .FieldsExcludeAutoIncrement }}${{ add $i 1 }}, {{ end }}${{ add 1 (len .FieldsExcludeAutoIncrement) }})`
+        args = []any{ {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $f.IsJson }}string({{ $f.GoName }}Buf){{ else }}e.{{ $f.GoName }}{{ end }}, {{ end }}e.{{ .AutoIncrementField.GoName }} }
     }{{ else }}
     sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }})
-    VALUES ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
-    args = []any{ {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }} }
+        VALUES ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}${{ add $i 1 }}{{ end }})`
+    args = []any{ {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ if $f.IsJson }}string({{ $f.GoName }}Buf){{ else }}e.{{ $f.GoName }}{{ end }}{{ end }} }
     {{ end }}
 
     var returnAndUpdateVals bool
@@ -61,11 +77,19 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
 
         if err = rows.Scan(
 			{{- range $i, $f := .Fields }}
-			&e.{{ $f.GoName }},
+            {{- if $f.IsJson }}&{{ $f.GoName }}Buf{{ else }}&e.{{ $f.GoName }}{{ end }},
 			{{- end }}
 		); err != nil {
             return
         }
+        
+        {{ if len .JsonFields }}
+            {{ range $i, $f := .JsonFields }}
+            if err = json.Unmarshal({{ $f.GoName }}Buf, &e.{{ $f.GoName }}); err != nil {
+                return fmt.Errorf("failed to unmarshal {{ $f.GoName }} field: %w", err)
+            }
+            {{ end }}
+        {{ end }}
     }{{ if .AutoIncrementField }} else if e.{{ .AutoIncrementField.GoName }} == 0 {
         if ! rows.Next() {
             // TODO: on conflict do nothing case
@@ -84,32 +108,56 @@ func (e *{{ .GoName }}) Insert(ctx context.Context, insertOptions ...InsertOptio
 }
 
 func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
-	dbExecutor := fromContext(ctx)
-    var sql string
-    var sqlRows []string
-    var args []any
-
     if len(es) == 0 {
         return nil
     }
 
+	dbExecutor := fromContext(ctx)
+    var sql string
+    sqlRows := make([]string, 0, len(es))
+    args := make([]any, 0, {{ len .Fields }} * len(es))
+
+    {{ if .JsonFields }}
+        var {{ range $i, $f := .JsonFields }}{{ if $i }}, {{ end }}{{ $f.GoName }}Buf{{ end }} []byte
+    {{ end }}
+    
     {{ if .AutoIncrementField }}if es[0].{{ .AutoIncrementField.GoName }} == 0 {
-        sql = `INSERT INTO "{{ .SQLName }}" ({{ .AutoIncrementField.SQLName }}{{ range $i, $f := .FieldsExcludeAutoIncrement }}, {{ $f.SQLName }}{{ end }}) VALUES `
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ $f.SQLName }}, {{ end }}{{ .AutoIncrementField.SQLName }}) VALUES `
         for i, e := range es {
-            sqlRows = append(sqlRows, fmt.Sprintf(`(DEFAULT{{ range $i, $f := .FieldsExcludeAutoIncrement }}, $%d{{ end }})`{{ range $i, $f := .FieldsExcludeAutoIncrement }}, i * {{ len $.FieldsExcludeAutoIncrement }} + {{ add $i 1 }}{{ end }}))
-            args = append(args, {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
+            sqlRows = append(sqlRows, fmt.Sprintf(`({{ range $i, $f := .FieldsExcludeAutoIncrement }}$%d, {{ end }}DEFAULT)`{{ range $i, $f := .FieldsExcludeAutoIncrement }}, i * {{ len $.FieldsExcludeAutoIncrement }} + {{ add $i 1 }}{{ end }}))
+
+            {{ range $i, $f := .JsonFields -}}
+                if {{ $f.GoName }}Buf, err = json.Marshal(e.{{ $f.GoName }}); err != nil {
+                    return fmt.Errorf("failed to marshal {{ $f.GoName }} field of row #%d: %w", i, err)
+                }
+            {{- end }}
+
+            args = append(args, {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $i }}, {{ end }}{{ if $f.IsJson }}string({{ $f.GoName }}Buf){{ else }}e.{{ $f.GoName }}{{ end }}{{ end }})
         }
     } else {
-        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}) VALUES `
+        sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ $f.SQLName }}, {{ end }}{{ .AutoIncrementField.SQLName }}) VALUES `
         for i, e := range es {
             sqlRows = append(sqlRows, fmt.Sprintf(`({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}$%d{{ end }})`{{ range $i, $f := .Fields }}, i * {{ len $.Fields }} + {{ add $i 1 }}{{ end }}))
-            args = append(args, {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
+
+            {{ range $i, $f := .JsonFields -}}
+                if {{ $f.GoName }}Buf, err = json.Marshal(e.{{ $f.GoName }}); err != nil {
+                    return fmt.Errorf("failed to marshal {{ $f.GoName }} field of row #%d: %w", i, err)
+                }
+            {{- end }}
+
+            args = append(args, {{ range $i, $f := .FieldsExcludeAutoIncrement }}{{ if $f.IsJson }}string({{ $f.GoName }}Buf){{ else }}e.{{ $f.GoName }}{{ end }}, {{ end }}e.{{ .AutoIncrementField.GoName }})
         }
     }{{ else }}
     sql = `INSERT INTO "{{ .SQLName }}" ({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}) VALUES `
     for i, e := range es {
         sqlRows = append(sqlRows, fmt.Sprintf(`({{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}$%d{{ end }})`{{ range $i, $f := .Fields }}, i * {{ len $.Fields }} + {{ add $i 1 }}{{ end }}))
-        args = append(args, {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}e.{{ $f.GoName }}{{ end }})
+
+        {{ range $i, $f := .JsonFields -}}
+            if {{ $f.GoName }}Buf, err = json.Marshal(e.{{ $f.GoName }}); err != nil {
+                return fmt.Errorf("failed to marshal {{ $f.GoName }} field of row #%d: %w", i, err)
+            }
+        {{- end}}
+        args = append(args, {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ if $f.IsJson }}string({{ $f.GoName }}Buf){{ else }}e.{{ $f.GoName }}{{ end }}{{ end }})
     }
     {{ end }}
 

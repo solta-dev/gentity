@@ -4,12 +4,13 @@
 package main
 
 import (
-	"fmt"
-	"strings"
 	"context"
+	"fmt"
 	"github.com/jackc/pgx/v5"
-    "github.com/jackc/pgx/v5/pgconn"
-    
+	"github.com/jackc/pgx/v5/pgconn"
+	"strings"
+
+	"encoding/json"
 )
 
 const chunkSize = 1000
@@ -28,76 +29,81 @@ type DBExecutor interface {
 type DBExecutorKey string
 
 func fromContext(ctx context.Context) DBExecutor {
-    dbExecutorVal := ctx.Value(DBExecutorKey("dbExecutor"))
-    if dbExecutorVal == nil {
-        dbExecutorVal = ctx.Value("dbExecutor")
-    }
-    dbe, ok := dbExecutorVal.(DBExecutor)
-    if !ok {
-        panic("DBExecutor not found in context")
-    }
-    return dbe
+	dbExecutorVal := ctx.Value(DBExecutorKey("dbExecutor"))
+	if dbExecutorVal == nil {
+		dbExecutorVal = ctx.Value("dbExecutor")
+	}
+	dbe, ok := dbExecutorVal.(DBExecutor)
+	if !ok {
+		panic("DBExecutor not found in context")
+	}
+	return dbe
 }
-
 
 /********************************
  * Test
- * 	ID uint64 id  <primary>   <autoincrement> 
- * 	IntA int int_a  
- * 	IntB SomeInts int_b  
- * 	StrA string str_a  
- * 	TimeA time.Time time_a  
+ * 	ID uint64 id  <primary>   <autoincrement>
+ * 	IntA int int_a
+ * 	IntB SomeInts int_b
+ * 	StrA string str_a
+ * 	TimeA time.Time time_a
+ * 	Json jsonType json
  * Primary index: primary
- * Unique indexes: 
+ * Unique indexes:
  *  primary: id
  *  test_str_a: str_a
- * Non unique indexes: 
+ * Non unique indexes:
  *  test_int_a_int_b: int_a, int_b
  ********************************/
 
 type Tests []*Test
 
 type TestOrErr struct {
-    Entity *Test
-    Err error
+	Entity *Test
+	Err    error
 }
 
 func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
-    dbExecutor := fromContext(ctx)
-    var sql, returning string
-    var args []any
+	dbExecutor := fromContext(ctx)
+	var sql, returning string
+	args := make([]any, 0, 6)
 
-    if e.ID == 0 {
-        sql = `INSERT INTO "tests" (int_a, int_b, str_a, time_a)
-        VALUES ($1, $2, $3, $4)`
-        returning = ` RETURNING id`
-        args = []any{ e.IntA, e.IntB, e.StrA, e.TimeA }
-    } else {
-        sql = `INSERT INTO "tests" (id, int_a, int_b, str_a, time_a)
-        VALUES ($1, $2, $3, $4, $5)`
-        args = []any{ e.ID, e.IntA, e.IntB, e.StrA, e.TimeA }
-    }
+	var JsonBuf []byte
+	if JsonBuf, err = json.Marshal(e.Json); err != nil {
+		return fmt.Errorf("failed to marshal Json field: %w", err)
+	}
 
-    var returnAndUpdateVals bool
+	if e.ID == 0 {
+		sql = `INSERT INTO "tests" (int_a, int_b, str_a, time_a, json, id)
+            VALUES ($1, $2, $3, $4, $5, DEFAULT)`
+		returning = ` RETURNING id`
+		args = []any{e.IntA, e.IntB, e.StrA, e.TimeA, string(JsonBuf)}
+	} else {
+		sql = `INSERT INTO "tests" (int_a, int_b, str_a, time_a, json, id)
+            VALUES ($1, $2, $3, $4, $5, $6)`
+		args = []any{e.IntA, e.IntB, e.StrA, e.TimeA, string(JsonBuf), e.ID}
+	}
+
+	var returnAndUpdateVals bool
 	for _, opt := range insertOptions {
 		if opt.ReturnAndUpdateVals {
 			returnAndUpdateVals = true
 		}
 		if opt.OnConflictStatement != "" {
-			sql += " ON CONFLICT "+ opt.OnConflictStatement
+			sql += " ON CONFLICT " + opt.OnConflictStatement
 		}
 	}
-    
-    if returnAndUpdateVals {
-        returning = ` RETURNING id, int_a, int_b, str_a, time_a`
-    }
-    if returning != "" {
-        sql += returning
-    }
+
+	if returnAndUpdateVals {
+		returning = ` RETURNING id, int_a, int_b, str_a, time_a, json`
+	}
+	if returning != "" {
+		sql += returning
+	}
 
 	var rows pgx.Rows
 	rows, err = dbExecutor.Query(ctx, sql, args...)
-	defer func(){
+	defer func() {
 		rows.Close()
 		if err == nil {
 			err = rows.Err()
@@ -106,189 +112,195 @@ func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err e
 			err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
 		}
 	}()
-    if err != nil {
-        return
-    }
+	if err != nil {
+		return
+	}
 
-    if returnAndUpdateVals {
-		if ! rows.Next() {
-            // TODO: on conflict do nothing case
-            if err = rows.Err(); err != nil {
-                return
-            }
-            return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
-        }
+	if returnAndUpdateVals {
+		if !rows.Next() {
+			// TODO: on conflict do nothing case
+			if err = rows.Err(); err != nil {
+				return
+			}
+			return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
+		}
 
-        if err = rows.Scan(
-			&e.ID,
-			&e.IntA,
-			&e.IntB,
-			&e.StrA,
-			&e.TimeA,
-		); err != nil {
-            return
-        }
-    } else if e.ID == 0 {
-        if ! rows.Next() {
-            // TODO: on conflict do nothing case
-            if err = rows.Err(); err != nil {
-                return
-            }
-            return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
-        }
+		if err = rows.Scan(&e.ID, &e.IntA, &e.IntB, &e.StrA, &e.TimeA, &JsonBuf); err != nil {
+			return
+		}
 
-        if err = rows.Scan(&e.ID); err != nil {
-            return
-        }
-    }
+		if err = json.Unmarshal(JsonBuf, &e.Json); err != nil {
+			return fmt.Errorf("failed to unmarshal Json field: %w", err)
+		}
+
+	} else if e.ID == 0 {
+		if !rows.Next() {
+			// TODO: on conflict do nothing case
+			if err = rows.Err(); err != nil {
+				return
+			}
+			return fmt.Errorf("Insert-query doesn't return anything, but has returning clause")
+		}
+
+		if err = rows.Scan(&e.ID); err != nil {
+			return
+		}
+	}
 
 	return nil
 }
 
 func (es Tests) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
+	if len(es) == 0 {
+		return nil
+	}
+
 	dbExecutor := fromContext(ctx)
-    var sql string
-    var sqlRows []string
-    var args []any
+	var sql string
+	sqlRows := make([]string, 0, len(es))
+	args := make([]any, 0, 6*len(es))
 
-    if len(es) == 0 {
-        return nil
-    }
+	var JsonBuf []byte
 
-    if es[0].ID == 0 {
-        sql = `INSERT INTO "tests" (id, int_a, int_b, str_a, time_a) VALUES `
-        for i, e := range es {
-            sqlRows = append(sqlRows, fmt.Sprintf(`(DEFAULT, $%d, $%d, $%d, $%d)`, i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4))
-            args = append(args, e.IntA, e.IntB, e.StrA, e.TimeA)
-        }
-    } else {
-        sql = `INSERT INTO "tests" (id, int_a, int_b, str_a, time_a) VALUES `
-        for i, e := range es {
-            sqlRows = append(sqlRows, fmt.Sprintf(`($%d, $%d, $%d, $%d, $%d)`, i * 5 + 1, i * 5 + 2, i * 5 + 3, i * 5 + 4, i * 5 + 5))
-            args = append(args, e.ID, e.IntA, e.IntB, e.StrA, e.TimeA)
-        }
-    }
+	if es[0].ID == 0 {
+		sql = `INSERT INTO "tests" (int_a, int_b, str_a, time_a, json, id) VALUES `
+		for i, e := range es {
+			sqlRows = append(sqlRows, fmt.Sprintf(`($%d, $%d, $%d, $%d, $%d, DEFAULT)`, i*5+1, i*5+2, i*5+3, i*5+4, i*5+5))
 
-    sql += strings.Join(sqlRows, ", ")
+			if JsonBuf, err = json.Marshal(e.Json); err != nil {
+				return fmt.Errorf("failed to marshal Json field of row #%d: %w", i, err)
+			}
+
+			args = append(args, e.IntA, e.IntB, e.StrA, e.TimeA, string(JsonBuf))
+		}
+	} else {
+		sql = `INSERT INTO "tests" (int_a, int_b, str_a, time_a, json, id) VALUES `
+		for i, e := range es {
+			sqlRows = append(sqlRows, fmt.Sprintf(`($%d, $%d, $%d, $%d, $%d, $%d)`, i*6+1, i*6+2, i*6+3, i*6+4, i*6+5, i*6+6))
+
+			if JsonBuf, err = json.Marshal(e.Json); err != nil {
+				return fmt.Errorf("failed to marshal Json field of row #%d: %w", i, err)
+			}
+
+			args = append(args, e.IntA, e.IntB, e.StrA, e.TimeA, string(JsonBuf), e.ID)
+		}
+	}
+
+	sql += strings.Join(sqlRows, ", ")
 
 	for _, opt := range insertOptions {
 		if opt.ReturnAndUpdateVals {
 			err = fmt.Errorf("ReturnAndUpdateVals option is not supported for multi-insert now")
-            return
+			return
 		}
 		if opt.OnConflictStatement != "" {
-			sql += " ON CONFLICT "+ opt.OnConflictStatement
+			sql += " ON CONFLICT " + opt.OnConflictStatement
 		}
 	}
 
 	_, err = dbExecutor.Exec(ctx, sql, args...)
-    if err != nil {
-        err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
-    }
+	if err != nil {
+		err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
+	}
 
 	return
 }
 
-
-
 func (Test) Find(ctx context.Context, condition string, values []interface{}) (entities Tests, err error) {
-    return Test{}.Query(
-        ctx,
-        `SELECT id, int_a, int_b, str_a, time_a
+	return Test{}.Query(
+		ctx,
+		`SELECT id, int_a, int_b, str_a, time_a, json
 	    FROM "tests"
-	    WHERE ` + condition,
-        values,
-    )
+	    WHERE `+condition,
+		values,
+	)
 }
 
 func (Test) FindCh(ctx context.Context, condition string, values []interface{}) <-chan TestOrErr {
-    return Test{}.QueryCh(
-        ctx,
-        `SELECT id, int_a, int_b, str_a, time_a
+	return Test{}.QueryCh(
+		ctx,
+		`SELECT id, int_a, int_b, str_a, time_a, json
 	    FROM "tests"
-	    WHERE ` + condition,
-        values,
-    )
+	    WHERE `+condition,
+		values,
+	)
 }
 
 func (Test) Query(ctx context.Context, sql string, values []interface{}) (entities Tests, err error) {
 
-    Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, e error) {
-        if e != nil {
-            err = e
-        } else if ent != nil {
-            entities = append(entities, ent)
-        }
-    })
+	Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, e error) {
+		if e != nil {
+			err = e
+		} else if ent != nil {
+			entities = append(entities, ent)
+		}
+	})
 
-    return
+	return
 }
 
 func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interface{}, cb func(*Test, error)) {
-    dbExecutor := fromContext(ctx)
+	dbExecutor := fromContext(ctx)
 
-    var rows pgx.Rows
-    var err error
-    rows, err = dbExecutor.Query(
-        ctx,
-        sql,
-        values...
-    )
-    defer func(){
-        rows.Close()
-        if err == nil {
-            err = rows.Err()
-        }
-        if err != nil {
-            if len(sql) > 500 {
-                sql = sql[:500] + "..."
-            }
+	var rows pgx.Rows
+	var err error
+	rows, err = dbExecutor.Query(
+		ctx,
+		sql,
+		values...,
+	)
+	defer func() {
+		rows.Close()
+		if err == nil {
+			err = rows.Err()
+		}
+		if err != nil {
+			if len(sql) > 500 {
+				sql = sql[:500] + "..."
+			}
 
-            err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
-        }
+			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
+		}
+		cb(nil, err) // call with nil,nil - is for empty result
+	}()
 
-        if err != nil {
-            cb(nil, err)
-        }
-        cb(nil, nil)
-    }()
+	if err != nil {
+		return
+	}
 
-    if err != nil {
-        return
-    }
+	var JsonBuf []byte
 
-    for rows.Next() {
+	for rows.Next() {
 
 		e := Test{}
 
-		if err = rows.Scan(
-			&e.ID,
-			&e.IntA,
-			&e.IntB,
-			&e.StrA,
-			&e.TimeA,	
-		); err != nil {
-            return
-        }
+		if err = rows.Scan(&e.ID, &e.IntA, &e.IntB, &e.StrA, &e.TimeA, &JsonBuf); err != nil {
+			return
+		}
 
-        cb(&e, nil)
+		if err = json.Unmarshal(JsonBuf, &e.Json); err != nil {
+			cb(nil, fmt.Errorf("failed to unmarshal Json field: %w", err))
+			return
+		}
+
+		cb(&e, nil)
 	}
 }
 
 func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) <-chan TestOrErr {
-    var ch = make(chan TestOrErr)
-    
-    go Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, err error) {
-        if err != nil {
-            ch <- TestOrErr{Err: err}
-        } else if ent != nil {
-            ch <- TestOrErr{Entity: ent}
-        } else {
+	var ch = make(chan TestOrErr)
+
+	go Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, err error) {
+		if err != nil {
+			ch <- TestOrErr{Err: err}
+		} else if ent != nil {
+			ch <- TestOrErr{Entity: ent}
+		} else {
 			close(ch)
-        }
-    })
-    
-    return ch
+		}
+	})
+
+	return ch
 }
 
 func (e Test) GetAll(ctx context.Context) (Tests, error) {
@@ -299,13 +311,8 @@ func (e Test) GetAllCh(ctx context.Context) <-chan TestOrErr {
 	return e.FindCh(ctx, "1=1", []any{})
 }
 
- 
 func (e Test) GetByPrimary(ctx context.Context, id uint64) (*Test, error) {
-	es, err := e.Find(
-		ctx,
-		"id = $1",
-		[]any{ id },
-	)
+	es, err := e.Find(ctx, "id= $1", []any{id})
 	if err != nil {
 		return nil, err
 	}
@@ -317,54 +324,50 @@ func (e Test) GetByPrimary(ctx context.Context, id uint64) (*Test, error) {
 }
 
 func (e Test) genFindQuery4MultiGetByPrimary(id []uint64) (sql string, params []any) {
-    sql = "id = any($1)"
-    params = []any{ id }
-    return
+	sql = "id = any($1)"
+	params = []any{id}
+	return
 }
 
 func (e Test) MultiGetByPrimary(ctx context.Context, id []uint64) (Tests, error) {
-    if len(id) > chunkSize {
-        return nil, fmt.Errorf("too many items in id (%d), please use MultiGetByPrimaryCh instead", len(id))
-    }
-    sql, params := e.genFindQuery4MultiGetByPrimary(id)
+	if len(id) > chunkSize {
+		return nil, fmt.Errorf("too many items in id (%d), please use MultiGetByPrimaryCh instead", len(id))
+	}
+	sql, params := e.genFindQuery4MultiGetByPrimary(id)
 	return e.Find(ctx, sql, params)
 }
 
 func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64) <-chan TestOrErr {
-    if len(id) > chunkSize {
-        ch := make(chan TestOrErr)
+	if len(id) > chunkSize {
+		ch := make(chan TestOrErr)
 
-        go func(){
-            for offset := 0; offset < len(id); offset += chunkSize {
-                limit := offset + chunkSize
-                if limit > len(id) {
-                    limit = len(id)
-                }
+		go func() {
+			for offset := 0; offset < len(id); offset += chunkSize {
+				limit := offset + chunkSize
+				if limit > len(id) {
+					limit = len(id)
+				}
 
-                sql, params := e.genFindQuery4MultiGetByPrimary(id[offset:limit])
-                resCh := e.FindCh(ctx, sql, params)
-                for res := range resCh {
-                    ch <- res
-                    if res.Err != nil {
-                        close(ch)
-                        break
-                    }
-                }
-            }
-        }()
+				sql, params := e.genFindQuery4MultiGetByPrimary(id[offset:limit])
+				resCh := e.FindCh(ctx, sql, params)
+				for res := range resCh {
+					ch <- res
+					if res.Err != nil {
+						close(ch)
+						break
+					}
+				}
+			}
+		}()
 
-        return ch
-    } else {
-        sql, params := e.genFindQuery4MultiGetByPrimary(id)
-        return e.FindCh(ctx, sql, params)
-    }
+		return ch
+	} else {
+		sql, params := e.genFindQuery4MultiGetByPrimary(id)
+		return e.FindCh(ctx, sql, params)
+	}
 }
 func (e Test) GetByTestStrA(ctx context.Context, strA string) (*Test, error) {
-	es, err := e.Find(
-		ctx,
-		"str_a = $1",
-		[]any{ strA },
-	)
+	es, err := e.Find(ctx, "str_a= $1", []any{strA})
 	if err != nil {
 		return nil, err
 	}
@@ -376,55 +379,54 @@ func (e Test) GetByTestStrA(ctx context.Context, strA string) (*Test, error) {
 }
 
 func (e Test) genFindQuery4MultiGetByTestStrA(strA []string) (sql string, params []any) {
-    sql = "str_a = any($1)"
-    params = []any{ strA }
-    return
+	sql = "str_a = any($1)"
+	params = []any{strA}
+	return
 }
 
 func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) (Tests, error) {
-    if len(strA) > chunkSize {
-        return nil, fmt.Errorf("too many items in strA (%d), please use MultiGetByTestStrACh instead", len(strA))
-    }
-    sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
+	if len(strA) > chunkSize {
+		return nil, fmt.Errorf("too many items in strA (%d), please use MultiGetByTestStrACh instead", len(strA))
+	}
+	sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
 	return e.Find(ctx, sql, params)
 }
 
 func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string) <-chan TestOrErr {
-    if len(strA) > chunkSize {
-        ch := make(chan TestOrErr)
+	if len(strA) > chunkSize {
+		ch := make(chan TestOrErr)
 
-        go func(){
-            for offset := 0; offset < len(strA); offset += chunkSize {
-                limit := offset + chunkSize
-                if limit > len(strA) {
-                    limit = len(strA)
-                }
+		go func() {
+			for offset := 0; offset < len(strA); offset += chunkSize {
+				limit := offset + chunkSize
+				if limit > len(strA) {
+					limit = len(strA)
+				}
 
-                sql, params := e.genFindQuery4MultiGetByTestStrA(strA[offset:limit])
-                resCh := e.FindCh(ctx, sql, params)
-                for res := range resCh {
-                    ch <- res
-                    if res.Err != nil {
-                        close(ch)
-                        break
-                    }
-                }
-            }
-        }()
+				sql, params := e.genFindQuery4MultiGetByTestStrA(strA[offset:limit])
+				resCh := e.FindCh(ctx, sql, params)
+				for res := range resCh {
+					ch <- res
+					if res.Err != nil {
+						close(ch)
+						break
+					}
+				}
+			}
+		}()
 
-        return ch
-    } else {
-        sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
-        return e.FindCh(ctx, sql, params)
-    }
+		return ch
+	} else {
+		sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
+		return e.FindCh(ctx, sql, params)
+	}
 }
 
- 
 func (e Test) GetByTestIntAIntB(ctx context.Context, intA int, intB SomeInts) (Tests, error) {
 	return e.Find(
 		ctx,
 		"int_a = $1 AND int_b = $2",
-		[]any{ intA, intB },
+		[]any{intA, intB},
 	)
 }
 
@@ -432,40 +434,37 @@ func (e Test) GetByTestIntAIntBCh(ctx context.Context, intA int, intB SomeInts) 
 	return e.FindCh(
 		ctx,
 		"int_a = $1 AND int_b = $2",
-		[]any{ intA, intB },
+		[]any{intA, intB},
 	)
 }
 
-
-
- 
 func (e *Test) Update(ctx context.Context) (err error) {
 	dbExecutor := fromContext(ctx)
 
-	sql := `UPDATE "tests" SET int_a = $1, int_b = $2, str_a = $3, time_a = $4	WHERE id = $5`
-	_, err = dbExecutor.Exec(ctx, sql, e.IntA, e.IntB, e.StrA, e.TimeA, e.ID);
-    if err != nil {
-        err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
-    }
+	var JsonBuf []byte
+
+	sql := `UPDATE "tests" SET int_a = $1, int_b = $2, str_a = $3, time_a = $4, json = $5	WHERE id = $6`
+
+	if JsonBuf, err = json.Marshal(e.Json); err != nil {
+		return fmt.Errorf("failed to marshal Json field: %w", err)
+	}
+
+	_, err = dbExecutor.Exec(ctx, sql, e.IntA, e.IntB, e.StrA, e.TimeA, string(JsonBuf), e.ID)
+	if err != nil {
+		err = fmt.Errorf("Update query '%s' failed: %+v", sql, err)
+	}
 
 	return
 }
 
-
-
- 
 func (e *Test) Delete(ctx context.Context) (err error) {
 	dbExecutor := fromContext(ctx)
 
 	sql := `DELETE FROM "tests" WHERE id = $1`
-	_, err = dbExecutor.Exec(
-		ctx,
-		sql,
-		e.ID, 
-	);
-    if err != nil {
-        err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
-    }
+	_, err = dbExecutor.Exec(ctx, sql, e.ID)
+	if err != nil {
+		err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
+	}
 
 	return
 }
@@ -474,25 +473,19 @@ func (es Tests) Delete(ctx context.Context) (err error) {
 	dbExecutor := fromContext(ctx)
 
 	sql := `DELETE FROM "tests" WHERE `
-    rowsSql := make([]string, len(es))
-    var args []any
+	rowsSql := make([]string, len(es))
+	var args []any
 
-    for i, e := range es {
-        rowsSql[i] = fmt.Sprintf(`(id = $%d)`,
-            i * 1 + 1)
-        args = append(args, e.ID)
-    }
+	for i, e := range es {
+		rowsSql[i] = fmt.Sprintf(`(id = $%d)`, i*1+1)
+		args = append(args, e.ID)
+	}
 
-    sql = sql + strings.Join(rowsSql, " OR ")
-
-	_, err = dbExecutor.Exec(ctx, sql, args...);
-    if err != nil {
-        err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
-    }
+	sql = sql + strings.Join(rowsSql, " OR ")
+	_, err = dbExecutor.Exec(ctx, sql, args...)
+	if err != nil {
+		err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
+	}
 
 	return
 }
-
-
-
-
