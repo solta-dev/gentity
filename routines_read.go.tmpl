@@ -149,14 +149,15 @@ func (e {{ .GoName }}) GetAllCh(ctx context.Context) <-chan {{ .GoName }}OrErr {
                 params = []any{ {{ snake_case_to_camel_case (index $idx 0).SQLName false }} }
             {{- else -}}
                 {{ $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
-                var params []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
+                var args []any = make([]any, 0, len({{ $firstParam }}) * {{ len $idx }})
 
                 where := make([]string, len({{ $firstParam }}))
                 for i := range {{ $firstParam }} {
                     where[i] = fmt.Sprintf("({{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = $%d{{ end }})"{{ range $i, $f := $idx }}, {{ add 1 $i }} + i{{ end }})
-                    params = append(params, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ end }})
+                    args = append(args, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[i]{{ end }})
                 }
                 sql = strings.Join(where, " OR ")
+                params = args
             {{- end }}
             return
         }

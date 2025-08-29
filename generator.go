@@ -64,7 +64,7 @@ func generate(packageName string, entities []entity) string {
 			}
 		}
 
-		if entity.JsonFields != nil {
+		if len(entity.JsonFields) > 0 {
 			imports["encoding/json"] = struct{}{}
 		}
 	}
