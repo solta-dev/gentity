@@ -207,7 +207,10 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 			procFieldTag(f, ent, fld)
 
 			if st, ok := sm[id.Name]; ok {
-				for _, f := range st.structType.Fields.List {
+				for i, f := range st.structType.Fields.List {
+					if f == nil {
+						log.Fatalf("fld.GoName %s; structType %v fields %v field #%d is nil", fld.GoName, st.structType, st.structType.Fields, i)
+					}
 					if newTag(f.Tag.Value, "json") != nil {
 						fld.IsJson = true
 					}
