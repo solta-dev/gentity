@@ -18,6 +18,7 @@ type entity struct {
 	AutoIncrementField             *field
 	ShortestUniqKey                string
 	ShortestUniqWOAutoIncrementKey string
+	Imports                        map[string]string
 }
 
 func newEntity() *entity {

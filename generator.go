@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 	"text/template"
-
-	"golang.org/x/exp/maps"
 )
 
 //go:embed *.go.tmpl
@@ -43,12 +41,12 @@ func init() {
 func generate(packageName string, entities []entity) string {
 	newFileName := "gentity.gen.go"
 
-	var imports map[string]struct{} = make(map[string]struct{})
+	imports := make(map[string]string)
 	for _, entity := range entities {
 		for _, field := range entity.Fields {
 			// Import field type need only if it used arguments of methods.
 			// This is one case: getters.
-			if len(field.InIndexes) == 0 {
+			if len(field.InIndexes) == 0 && !field.InPrimaryKey {
 				continue
 			}
 
@@ -57,15 +55,25 @@ func generate(packageName string, entities []entity) string {
 				continue
 			}
 
-			if t[0] == "pgtype" {
-				imports["github.com/jackc/pgx/v5/pgtype"] = struct{}{}
+			pkgAlias := t[0]
+			if len(pkgAlias) > 2 && pkgAlias[:2] == "[]" {
+				pkgAlias = pkgAlias[2:]
+			}
+			if len(pkgAlias) > 1 && pkgAlias[0] == '*' {
+				pkgAlias = pkgAlias[1:]
+			}
+
+			if pkgAlias == "pgtype" {
+				imports["pgtype"] = "github.com/jackc/pgx/v5/pgtype"
+			} else if imp, ok := entity.Imports[pkgAlias]; ok {
+				imports[pkgAlias] = imp
 			} else {
-				imports[t[0]] = struct{}{}
+				imports[pkgAlias] = pkgAlias
 			}
 		}
 
 		if len(entity.JsonFields) > 0 {
-			imports["encoding/json"] = struct{}{}
+			imports["encoding/json"] = "encoding/json"
 		}
 	}
 	sort.Slice(entities, func(i, j int) bool {
@@ -76,8 +84,8 @@ func generate(packageName string, entities []entity) string {
 	if err := templates.Execute(&buf, struct {
 		PackageName string
 		Entities    []entity
-		Imports     []string
-	}{packageName, entities, maps.Keys(imports)}); err != nil {
+		Imports     map[string]string
+	}{packageName, entities, imports}); err != nil {
 		log.Fatalf("Execute template: %v", err)
 	}
 

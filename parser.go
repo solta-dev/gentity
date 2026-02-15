@@ -172,21 +172,19 @@ func procFieldTag(f *ast.Field, ent *entity, fld *field) {
 	}
 }
 
-func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
-	switch e.(type) {
+func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity, imports map[string]string) {
+	switch e := e.(type) {
 	case *ast.Ident:
-		id := e.(*ast.Ident)
-
-		log.Println(ent.GoName, "table", ent.SQLName, "fields:", f.Names, "ident.name:", id.Name)
+		log.Println(ent.GoName, "table", ent.SQLName, "fields:", f.Names, "ident.name:", e.Name)
 		if len(f.Names) == 0 {
-			if _, ok := sm[id.Name]; !ok {
-				log.Fatalf("Embedded structure %s wasn't found in package", id.Name)
+			if _, ok := sm[e.Name]; !ok {
+				log.Fatalf("Embedded structure %s wasn't found in package", e.Name)
 			}
 
-			subt := sm.procStruct(id.Name)
+			subt := sm.procStruct(e.Name, imports)
 
-			subt.Fields[0].OpeningEmbed = append(subt.Fields[0].OpeningEmbed, id.Name)
-			subt.Fields[len(subt.Fields)-1].ClosingEmbed = append(subt.Fields[0].ClosingEmbed, id.Name)
+			subt.Fields[0].OpeningEmbed = append(subt.Fields[0].OpeningEmbed, e.Name)
+			subt.Fields[len(subt.Fields)-1].ClosingEmbed = append(subt.Fields[0].ClosingEmbed, e.Name)
 			for i := range subt.Fields {
 				subt.Fields[i].EmbedLevel++
 				subt.Fields[i].Num = len(ent.Fields) + i
@@ -202,11 +200,11 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 			fld := newField()
 			fld.GoName = f.Names[0].Name
 			fld.SQLName = camelCaseToSnakeCase(f.Names[0].Name)
-			fld.GoType = e.(*ast.Ident).Name
+			fld.GoType = e.Name
 			fld.Num = len(ent.Fields)
 			procFieldTag(f, ent, fld)
 
-			if st, ok := sm[id.Name]; ok {
+			if st, ok := sm[e.Name]; ok {
 				for _, f := range st.structType.Fields.List {
 					if newTag(f.Tag.Value, "json") != nil {
 						fld.IsJson = true
@@ -220,20 +218,18 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 		fld := newField()
 		fld.GoName = f.Names[0].Name
 		fld.SQLName = camelCaseToSnakeCase(f.Names[0].Name)
-		fld.GoType = e.(*ast.SelectorExpr).Sel.Name
+		fld.GoType = e.Sel.Name
 		fld.Num = len(ent.Fields)
-		if expX, ok := e.(*ast.SelectorExpr).X.(*ast.Ident); ok {
+		if expX, ok := e.X.(*ast.Ident); ok {
 			fld.GoType = expX.Name + "." + fld.GoType
 		}
 		procFieldTag(f, ent, fld)
 		ent.Fields = append(ent.Fields, fld)
 	case *ast.StarExpr:
-		se := e.(*ast.StarExpr)
-		sm.procType(f, se.X, ent)
+		sm.procType(f, e.X, ent, imports)
 		ent.Fields[len(ent.Fields)-1].IsRef = true
 	case *ast.ArrayType:
-		at := e.(*ast.ArrayType)
-		sm.procType(f, at.Elt, ent)
+		sm.procType(f, e.Elt, ent, imports)
 		ent.Fields[len(ent.Fields)-1].IsArray = true
 	default:
 		id := e.(*ast.Ident)
@@ -241,9 +237,10 @@ func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity) {
 	}
 }
 
-func (sm structsMap) procStruct(name string) (e *entity) {
+func (sm structsMap) procStruct(name string, imports map[string]string) (e *entity) {
 
 	e = newEntity()
+	e.Imports = imports
 
 	if _, ok := sm[name]; !ok {
 		log.Fatalf("Struct type %s not found in package", name)
@@ -257,7 +254,7 @@ func (sm structsMap) procStruct(name string) (e *entity) {
 	e.SQLName = camelCaseToSnakeCase(e.SQLName)
 
 	for _, f := range sm[name].structType.Fields.List {
-		sm.procType(f, f.Type, e)
+		sm.procType(f, f.Type, e, imports)
 	}
 
 	for i, f := range e.Fields {
@@ -362,6 +359,8 @@ func parse() (packageName string, entities []entity) {
 		packageName = p.Name
 	}
 
+	imports := make(map[string]string)
+
 	structs := structsMap(make(map[string]structInfo))
 
 	inspector.New(files).Nodes([]ast.Node{&ast.GenDecl{}}, func(node ast.Node, push bool) (proceed bool) {
@@ -369,6 +368,19 @@ func parse() (packageName string, entities []entity) {
 
 		si := structInfo{}
 		var ok bool
+
+		for _, spec := range genDecl.Specs {
+			if is, ok := spec.(*ast.ImportSpec); ok {
+				var alias string
+				if is.Name == nil {
+					pathParts := strings.Split(is.Path.Value, "/")
+					alias = pathParts[len(pathParts)-1]
+				} else {
+					alias = is.Name.Name
+				}
+				imports[strings.Trim(alias, "\"")] = strings.Trim(is.Path.Value, "\"")
+			}
+		}
 
 		si.typeSpec, ok = genDecl.Specs[0].(*ast.TypeSpec)
 		if !ok {
@@ -398,7 +410,7 @@ func parse() (packageName string, entities []entity) {
 			continue
 		}
 		//log.Println("proc struct", name)
-		entity := structs.procStruct(name)
+		entity := structs.procStruct(name, imports)
 		//log.Printf("entity %s: %+v", name, entity)
 
 		entities = append(entities, *entity)
