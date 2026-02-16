@@ -1,4 +1,4 @@
-![](https://img.shields.io/static/v1?label=Coverage&message=75.8%&color=green)
+![](https://img.shields.io/static/v1?label=Coverage&message=73.8%&color=green)
 
 # Gentity - is a codegen simple entity layer implementation 
 
@@ -74,6 +74,7 @@ fmt.Println("Id of new item is ", e.ID)
 
 * ~~Tests~~
 * ~~Multi-row insert and delete~~
+* Use iterators instead of channels
 * Chunked queries by long arrays
 * Change interface to .All() and .One for get resultset instead of channel use (or not because of with channels we can use select{} for read results simultaneous with other jobs)
 * On conflict clause in multi row insert

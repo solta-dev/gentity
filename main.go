@@ -52,11 +52,16 @@ var singularTablesNames = flag.Bool("singular", false, "tables names is in singu
 func main() {
 	flag.Parse()
 
-	packageName, entities := parse()
+	packageName, entities, err := parse()
 
-	filename := generate(packageName, entities)
-
-	if err := exec.Command("go", "fmt", filename).Run(); err != nil {
+	var filename string
+	if err == nil {
+		filename, err = generate(packageName, entities)
+	}
+	if err == nil {
+		err = exec.Command("go", "fmt", filename).Run()
+	}
+	if err != nil {
 		panic(err)
 	}
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -47,310 +49,53 @@ func mkPlural(singular string) (plural string) {
 	return
 }
 
-type tag struct {
-	byNumber []string
-	byName   map[string]string
-}
-
-func newTag(text string, name string) *tag {
-	tags := make(map[string]tag)
-
-	const (
-		outer uint8 = iota
-		initial
-		tagString
-		optionName
-		optionValue
-	)
-
-	var (
-		state          uint8 = outer
-		start          int
-		tagName        string
-		optName        string
-		curTag         *tag
-		outerDelimiter byte
-	)
-	for i := 0; i < len(text); i++ {
-		//fmt.Printf("i=%d c=%c state=%d\n", i, text[i], state)
-		switch state {
-		case outer:
-			outerDelimiter = text[i]
-			state = initial
-			start = i + 1
-		case initial:
-			switch text[i] {
-			case byte(':'), outerDelimiter:
-				tagName = text[start:i]
-				state = tagString
-				curTag = &tag{byName: make(map[string]string, 1), byNumber: make([]string, 0, 1)}
-				tags[tagName] = *curTag
-			case byte(' '):
-				start = i + 1
-			}
-		case tagString:
-			switch text[i] {
-			case byte('"'):
-				state = optionName
-				start = i + 1
-				optName = ""
-			case outerDelimiter:
-			default:
-				log.Fatalf("Tag delimiter %c doesn't supported", text[i])
-			}
-		case optionName:
-			switch text[i] {
-			case byte('='):
-				optName = text[start:i]
-				state = optionValue
-				start = i + 1
-			case byte(' '), byte('"'):
-				optName = text[start:i]
-				curTag.byNumber = append(tags[tagName].byNumber, optName)
-				curTag.byName[optName] = ""
-				if text[i] == byte('"') {
-					state = initial
-				}
-				start = i + 1
-			}
-		case optionValue:
-			if text[i] == byte(' ') || text[i] == byte('"') {
-				optValue := text[start:i]
-				curTag.byName[optName] = optValue
-				if text[i] == byte(' ') {
-					state = optionName
-				} else if text[i] == byte('"') {
-					state = initial
-				}
-				start = i + 1
-			}
-		}
-	}
-
-	tag, ok := tags[name]
-	if ok {
-		return &tag
-	} else {
+func procFieldTag(f *ast.Field, ent *entity, fld *field) error {
+	if f.Tag == nil {
+		log.Println(ent.GoName, "field", fld.GoName, "no tag")
 		return nil
 	}
-}
-
-type structInfo struct {
-	typeSpec     *ast.TypeSpec
-	structType   *ast.StructType
-	isForGentity bool
-}
-
-type structsMap map[string]structInfo
-
-func procFieldTag(f *ast.Field, ent *entity, fld *field) {
-	if f.Tag != nil {
-		log.Println(ent.GoName, "field", fld.GoName, "tag", f.Tag.Value)
-		tag := newTag(f.Tag.Value, "gentity")
-		if tag != nil {
-			if index, ok := tag.byName["index"]; ok {
-				if _, ok := ent.NonUniqIndexes[index]; !ok {
-					ent.NonUniqIndexes[index] = []*field{fld}
-				} else {
-					ent.NonUniqIndexes[index] = append(ent.NonUniqIndexes[index], fld)
-				}
-			}
-			if unique, ok := tag.byName["unique"]; ok {
-				log.Println(ent.GoName, "uniq", unique, "field", fld.GoName)
-				if _, ok := ent.UniqIndexes[unique]; !ok {
-					ent.UniqIndexes[unique] = []*field{fld}
-				} else {
-					ent.UniqIndexes[unique] = append(ent.UniqIndexes[unique], fld)
-				}
-			}
-			if _, ok := tag.byName["autoincrement"]; ok {
-				ent.AutoIncrementField = fld
-			}
-		}
-	} else {
-		log.Println(ent.GoName, "field", fld.GoName, "no tag")
+	log.Println(ent.GoName, "field", fld.GoName, "tag", f.Tag.Value)
+	tp := tagParser{Text: f.Tag.Value}
+	if err := tp.parse(); err != nil {
+		return err
 	}
-}
-
-func (sm structsMap) procType(f *ast.Field, e ast.Expr, ent *entity, imports map[string]string) {
-	switch e := e.(type) {
-	case *ast.Ident:
-		log.Println(ent.GoName, "table", ent.SQLName, "fields:", f.Names, "ident.name:", e.Name)
-		if len(f.Names) == 0 {
-			if _, ok := sm[e.Name]; !ok {
-				log.Fatalf("Embedded structure %s wasn't found in package", e.Name)
-			}
-
-			subt := sm.procStruct(e.Name, imports)
-
-			subt.Fields[0].OpeningEmbed = append(subt.Fields[0].OpeningEmbed, e.Name)
-			subt.Fields[len(subt.Fields)-1].ClosingEmbed = append(subt.Fields[0].ClosingEmbed, e.Name)
-			for i := range subt.Fields {
-				subt.Fields[i].EmbedLevel++
-				subt.Fields[i].Num = len(ent.Fields) + i
-			}
-			for name, uniq := range subt.UniqIndexes {
-				ent.UniqIndexes[name] = uniq
-			}
-			for name, index := range subt.NonUniqIndexes {
-				ent.NonUniqIndexes[name] = index
-			}
-			ent.Fields = append(ent.Fields, subt.Fields...)
+	tag, tagExists := tp.Result["gentity"]
+	if !tagExists {
+		return nil
+	}
+	if index, ok := tag["index"]; ok {
+		if _, ok := ent.NonUniqIndexes[index]; !ok {
+			ent.NonUniqIndexes[index] = []*field{fld}
 		} else {
-			fld := newField()
-			fld.GoName = f.Names[0].Name
-			fld.SQLName = camelCaseToSnakeCase(f.Names[0].Name)
-			fld.GoType = e.Name
-			fld.Num = len(ent.Fields)
-			procFieldTag(f, ent, fld)
-
-			if st, ok := sm[e.Name]; ok {
-				for _, f := range st.structType.Fields.List {
-					if newTag(f.Tag.Value, "json") != nil {
-						fld.IsJson = true
-					}
-				}
-			}
-
-			ent.Fields = append(ent.Fields, fld)
+			ent.NonUniqIndexes[index] = append(ent.NonUniqIndexes[index], fld)
 		}
-	case *ast.SelectorExpr:
-		fld := newField()
-		fld.GoName = f.Names[0].Name
-		fld.SQLName = camelCaseToSnakeCase(f.Names[0].Name)
-		fld.GoType = e.Sel.Name
-		fld.Num = len(ent.Fields)
-		if expX, ok := e.X.(*ast.Ident); ok {
-			fld.GoType = expX.Name + "." + fld.GoType
-		}
-		procFieldTag(f, ent, fld)
-		ent.Fields = append(ent.Fields, fld)
-	case *ast.StarExpr:
-		sm.procType(f, e.X, ent, imports)
-		ent.Fields[len(ent.Fields)-1].IsRef = true
-	case *ast.ArrayType:
-		sm.procType(f, e.Elt, ent, imports)
-		ent.Fields[len(ent.Fields)-1].IsArray = true
-	default:
-		id := e.(*ast.Ident)
-		log.Fatalf("Unknown type of field %s.%s type: %+v", ent.GoName, id.Name, e)
 	}
+	if unique, ok := tag["unique"]; ok {
+		log.Println(ent.GoName, "uniq", unique, "field", fld.GoName)
+		if _, ok := ent.UniqIndexes[unique]; !ok {
+			ent.UniqIndexes[unique] = []*field{fld}
+		} else {
+			ent.UniqIndexes[unique] = append(ent.UniqIndexes[unique], fld)
+		}
+	}
+	if _, ok := tag["autoincrement"]; ok {
+		ent.AutoIncrementField = fld
+	}
+	return nil
 }
 
-func (sm structsMap) procStruct(name string, imports map[string]string) (e *entity) {
-
-	e = newEntity()
-	e.Imports = imports
-
-	if _, ok := sm[name]; !ok {
-		log.Fatalf("Struct type %s not found in package", name)
-	}
-
-	e.GoName = sm[name].typeSpec.Name.Name
-	e.SQLName = e.GoName
-	if !*singularTablesNames {
-		e.SQLName = mkPlural(e.SQLName)
-	}
-	e.SQLName = camelCaseToSnakeCase(e.SQLName)
-
-	for _, f := range sm[name].structType.Fields.List {
-		sm.procType(f, f.Type, e, imports)
-	}
-
-	for i, f := range e.Fields {
-
-		//e.Fields[i].Num = i
-
-		if f.IsArray {
-			e.Fields[i].GoType = "[]" + f.GoType
-		}
-
-		if f.IsRef {
-			e.Fields[i].GoType = "*" + f.GoType
-		}
-	}
-
-	for name, fields := range e.UniqIndexes {
-		if name == "primary" || (e.PrimaryKey != "" && len(e.UniqIndexes[e.PrimaryKey]) > len(fields)) || e.PrimaryKey == "" {
-			e.PrimaryKey = name
-		}
-		for _, f := range fields {
-			log.Println(e.GoName, name, "uniq", f.GoName)
-		}
-	}
-	if e.PrimaryKey != "" {
-		e.FieldsExcludePrimaryKey = make([]*field, 0, len(e.Fields)-len(e.UniqIndexes[e.PrimaryKey]))
-		for _, f := range e.UniqIndexes[e.PrimaryKey] {
-			e.Fields[f.Num].InPrimaryKey = true
-		}
-		for _, f := range e.Fields {
-			if !f.InPrimaryKey {
-				e.FieldsExcludePrimaryKey = append(e.FieldsExcludePrimaryKey, f)
-			}
-		}
-	} else {
-		e.FieldsExcludePrimaryKey = e.Fields
-	}
-
-	shortestUniqKeyLength := len(e.Fields)
-	shortestUniqKeyWOAutoIncrementLength := len(e.Fields)
-	for name, fields := range e.UniqIndexes {
-		var hasAutoIncrement bool
-		for _, f := range fields {
-			f.InIndexes = append(f.InIndexes, name)
-			if e.AutoIncrementField != nil && e.AutoIncrementField.GoName != f.GoName {
-				hasAutoIncrement = true
-			}
-		}
-		if len(fields) < shortestUniqKeyLength {
-			shortestUniqKeyLength = len(fields)
-			e.ShortestUniqKey = name
-		}
-		if !hasAutoIncrement && len(fields) < shortestUniqKeyWOAutoIncrementLength {
-			shortestUniqKeyWOAutoIncrementLength = len(fields)
-			e.ShortestUniqWOAutoIncrementKey = name
-		}
-	}
-	for name, fields := range e.NonUniqIndexes {
-		for _, f := range fields {
-			f.InIndexes = append(f.InIndexes, name)
-		}
-	}
-
-	if e.AutoIncrementField == nil {
-		e.FieldsExcludeAutoIncrement = e.Fields
-	} else {
-		e.FieldsExcludeAutoIncrement = make([]*field, 0, len(e.Fields)-1)
-		for _, f := range e.Fields {
-			if e.AutoIncrementField.GoName != f.GoName {
-				e.FieldsExcludeAutoIncrement = append(e.FieldsExcludeAutoIncrement, f)
-			}
-		}
-	}
-
-	e.JsonFields = make([]*field, 0, len(e.FieldsExcludeAutoIncrement))
-	for _, f := range e.FieldsExcludeAutoIncrement {
-		if f.IsJson {
-			e.JsonFields = append(e.JsonFields, f)
-		}
-	}
-
-	return
-}
-
-func parse() (packageName string, entities []entity) {
-
+func parse() (packageName string, entities []entity, err error) {
 	path := os.Getenv("GOFILE")
 	if path == "" {
-		log.Fatal("GOFILE must be set")
+		return "", nil, errors.New("GOFILE must be set")
 	}
 
 	astPkgs, err := parser.ParseDir(token.NewFileSet(), filepath.Dir(path), nil, parser.ParseComments)
 	if err != nil {
-		log.Fatalf("parse dir: %v", err)
+		return "", nil, fmt.Errorf("parse dir: %v", err)
 	}
 	if len(astPkgs) != 1 {
-		log.Fatalf("Not one package found")
+		return "", nil, errors.New("not one package found")
 	}
 
 	var files []*ast.File
@@ -360,61 +105,65 @@ func parse() (packageName string, entities []entity) {
 	}
 
 	imports := make(map[string]string)
-
 	structs := structsMap(make(map[string]structInfo))
 
-	inspector.New(files).Nodes([]ast.Node{&ast.GenDecl{}}, func(node ast.Node, push bool) (proceed bool) {
-		genDecl := node.(*ast.GenDecl)
-
-		si := structInfo{}
-		var ok bool
-
-		for _, spec := range genDecl.Specs {
-			if is, ok := spec.(*ast.ImportSpec); ok {
-				var alias string
-				if is.Name == nil {
-					pathParts := strings.Split(is.Path.Value, "/")
-					alias = pathParts[len(pathParts)-1]
-				} else {
-					alias = is.Name.Name
-				}
-				imports[strings.Trim(alias, "\"")] = strings.Trim(is.Path.Value, "\"")
-			}
-		}
-
-		si.typeSpec, ok = genDecl.Specs[0].(*ast.TypeSpec)
-		if !ok {
-			return false
-		}
-
-		si.structType, ok = si.typeSpec.Type.(*ast.StructType)
-		if !ok {
-			return false
-		}
-
-		if genDecl.Doc != nil {
-			for _, comment := range genDecl.Doc.List {
-				if comment.Text == "// gentity" {
-					si.isForGentity = true
-				}
-			}
-		}
-
-		structs[si.typeSpec.Name.Name] = si
-
-		return false
-	})
+	inspector.New(files).Nodes([]ast.Node{&ast.GenDecl{}}, func(node ast.Node, _ bool) (proceed bool) { return procNode(node, structs, imports) })
 
 	for name, si := range structs {
 		if !si.isForGentity {
 			continue
 		}
-		//log.Println("proc struct", name)
-		entity := structs.procStruct(name, imports)
-		//log.Printf("entity %s: %+v", name, entity)
-
+		var entity *entity
+		entity, err = structs.procStruct(name, imports)
+		if err != nil {
+			return
+		}
 		entities = append(entities, *entity)
 	}
 
 	return
+}
+
+func procNode(node ast.Node, sm structsMap, imports map[string]string) (proceed bool) {
+	genDecl, ok := node.(*ast.GenDecl)
+	if !ok {
+		panic("unexpected node type")
+	}
+
+	si := structInfo{}
+
+	for _, spec := range genDecl.Specs {
+		if is, ok := spec.(*ast.ImportSpec); ok {
+			var alias string
+			if is.Name == nil {
+				pathParts := strings.Split(is.Path.Value, "/")
+				alias = pathParts[len(pathParts)-1]
+			} else {
+				alias = is.Name.Name
+			}
+			imports[strings.Trim(alias, "\"")] = strings.Trim(is.Path.Value, "\"")
+		}
+	}
+
+	si.typeSpec, ok = genDecl.Specs[0].(*ast.TypeSpec)
+	if !ok {
+		return false
+	}
+
+	si.structType, ok = si.typeSpec.Type.(*ast.StructType)
+	if !ok {
+		return false
+	}
+
+	if genDecl.Doc != nil {
+		for _, comment := range genDecl.Doc.List {
+			if comment.Text == "// gentity" {
+				si.isForGentity = true
+			}
+		}
+	}
+
+	sm[si.typeSpec.Name.Name] = si
+
+	return false
 }
