@@ -38,7 +38,10 @@ type Test struct {
 }
 
 func (Test) createTable(ctx context.Context) error {
-	pgConn := ctx.Value(DBExecutorKey("dbExecutor")).(DBExecutor)
+	pgConn, ok := ctx.Value(DBExecutorKey("dbExecutor")).(DBExecutor)
+	if !ok {
+		panic("ctx value dbExecutor has bad type")
+	}
 
 	if _, err := pgConn.Exec(context.Background(), `CREATE TABLE tests (
 		id bigserial PRIMARY KEY,

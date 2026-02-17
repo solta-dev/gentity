@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"embed"
-	_ "embed"
+	"fmt"
 	"log"
 	"os"
 	"sort"
@@ -38,38 +38,13 @@ func init() {
 	templates.Funcs(tmplFuncs)
 }
 
-func generate(packageName string, entities []entity) string {
-	newFileName := "gentity.gen.go"
+func generate(packageName string, entities []entity) (newFileName string, err error) {
+	newFileName = "gentity.gen.go"
 
 	imports := make(map[string]string)
 	for _, entity := range entities {
 		for _, field := range entity.Fields {
-			// Import field type need only if it used arguments of methods.
-			// This is one case: getters.
-			if len(field.InIndexes) == 0 && !field.InPrimaryKey {
-				continue
-			}
-
-			t := strings.Split(field.GoType, ".")
-			if len(t) == 1 {
-				continue
-			}
-
-			pkgAlias := t[0]
-			if len(pkgAlias) > 2 && pkgAlias[:2] == "[]" {
-				pkgAlias = pkgAlias[2:]
-			}
-			if len(pkgAlias) > 1 && pkgAlias[0] == '*' {
-				pkgAlias = pkgAlias[1:]
-			}
-
-			if pkgAlias == "pgtype" {
-				imports["pgtype"] = "github.com/jackc/pgx/v5/pgtype"
-			} else if imp, ok := entity.Imports[pkgAlias]; ok {
-				imports[pkgAlias] = imp
-			} else {
-				imports[pkgAlias] = pkgAlias
-			}
+			importsByField(&entity, field, imports)
 		}
 
 		if len(entity.JsonFields) > 0 {
@@ -81,22 +56,55 @@ func generate(packageName string, entities []entity) string {
 	})
 
 	var buf bytes.Buffer
-	if err := templates.Execute(&buf, struct {
+	if err = templates.Execute(&buf, struct {
 		PackageName string
 		Entities    []entity
 		Imports     map[string]string
 	}{packageName, entities, imports}); err != nil {
-		log.Fatalf("Execute template: %v", err)
+		err = fmt.Errorf("execute template failed: %v", err)
+		return
 	}
 
-	outFile, err := os.Create(newFileName)
+	var outFile *os.File
+	outFile, err = os.Create(newFileName)
 	if err != nil {
-		log.Fatalf("Create file: %v", err)
+		err = fmt.Errorf("create file: %v", err)
+		return
 	}
 	defer outFile.Close()
-	if _, err := outFile.WriteString(buf.String()); err != nil {
-		log.Fatalf("Failed to write generated file %s: %v", newFileName, err)
+	if _, err = outFile.WriteString(buf.String()); err != nil {
+		err = fmt.Errorf("failed to write generated file %s: %v", newFileName, err)
+		return
 	}
 
-	return newFileName
+	return
+}
+
+func importsByField(entity *entity, field *field, imports map[string]string) {
+	// Import field type need only if it used arguments of methods.
+	// This is one case: getters.
+	if len(field.InIndexes) == 0 && !field.InPrimaryKey {
+		return
+	}
+
+	t := strings.Split(field.GoType, ".")
+	if len(t) == 1 {
+		return
+	}
+
+	pkgAlias := t[0]
+	if len(pkgAlias) > 2 && pkgAlias[:2] == "[]" {
+		pkgAlias = pkgAlias[2:]
+	}
+	if len(pkgAlias) > 1 && pkgAlias[0] == '*' {
+		pkgAlias = pkgAlias[1:]
+	}
+
+	if pkgAlias == "pgtype" {
+		imports["pgtype"] = "github.com/jackc/pgx/v5/pgtype"
+	} else if imp, ok := entity.Imports[pkgAlias]; ok {
+		imports[pkgAlias] = imp
+	} else {
+		imports[pkgAlias] = pkgAlias
+	}
 }

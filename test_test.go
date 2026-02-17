@@ -20,12 +20,17 @@ type tracer struct {
 	t *testing.T
 }
 
+type tracerCtxVal string
+
+var tracerCtxKey = tracerCtxVal("pg_query_start_ts")
+
 func (tracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	log.Printf("SQL: %s, args: %+v\n", data.SQL, data.Args)
-	return context.WithValue(ctx, "pg_query_start_ts", time.Now())
+	return context.WithValue(ctx, tracerCtxKey, time.Now())
 }
-func (t tracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
-	log.Printf("command_tag: %s, err: %+v, rows_affected: %d, duration: %s\n", data.CommandTag.String(), data.Err, data.CommandTag.RowsAffected(), time.Since(ctx.Value("pg_query_start_ts").(time.Time)))
+func (t tracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	log.Printf("command_tag: %s, err: %+v, rows_affected: %d, duration: %s\n",
+		data.CommandTag.String(), data.Err, data.CommandTag.RowsAffected(), time.Since(ctx.Value(tracerCtxKey).(time.Time)))
 	if data.Err != nil {
 		t.t.Fatal(data.Err)
 	}
@@ -43,8 +48,8 @@ func getFreePort() (port int, err error) {
 	return
 }
 
+//nolint:gocognit,revive,funlen // just because TODO:
 func TestMain(t *testing.T) {
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -53,6 +58,7 @@ func TestMain(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	//nolint:gosec,G204 // no user input here
 	cmd := exec.CommandContext(ctx,
 		"docker", "run",
 		"--env", "POSTGRES_PASSWORD=gentity",
@@ -65,16 +71,20 @@ func TestMain(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("started docker", cmd.Process.Pid)
+	var pid int
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+	t.Logf("started docker pid=%d", pid)
 	defer func() {
-		if err := syscall.Kill(cmd.Process.Pid, syscall.SIGINT); err != nil {
+		if err := syscall.Kill(pid, syscall.SIGINT); err != nil {
 			t.Fatal(err)
 		}
-		fmt.Println("killed docker", cmd.Process.Pid)
+		t.Logf("killed docker pid=%d", pid)
 		if err := cmd.Wait(); err != nil {
 			t.Fatal(err)
 		}
-		fmt.Println("waited docker", cmd.Process.Pid)
+		t.Logf("waited docker pid=%d", pid)
 	}()
 
 	pgconf, err := pgxpool.ParseConfig(fmt.Sprintf("host=127.0.0.1 user=gentity password=gentity dbname=gentity port=%d sslmode=disable", pgPort))
@@ -91,17 +101,13 @@ func TestMain(t *testing.T) {
 	var pgConn *pgxpool.Conn
 	for {
 		pgConn, err = pgpool.Acquire(ctx)
-
-		if err != nil {
-			if time.Since(pgAwaitingStart) > 10*time.Second {
-				t.Fatal(err)
-			} else {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-		} else {
+		if err == nil {
 			break
 		}
+		if time.Since(pgAwaitingStart) > 10*time.Second {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	ctx = context.WithValue(ctx, DBExecutorKey("dbExecutor"), pgConn.Conn())
@@ -111,7 +117,9 @@ func TestMain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	os.Setenv("GOFILE", "test_entity.go")
+	if err = os.Setenv("GOFILE", "test_entity.go"); err != nil {
+		t.Fatal(err)
+	}
 	main()
 
 	es, err := Test{}.GetAll(ctx)
@@ -388,5 +396,4 @@ func TestMain(t *testing.T) {
 	if diff := deep.Equal(es, Tests{{ID: 35, IntA: 9, IntB: 9, StrA: "i", TimeA: t1}}); diff != nil {
 		t.Error(diff)
 	}
-
 }

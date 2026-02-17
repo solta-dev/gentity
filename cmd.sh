@@ -2,6 +2,7 @@
 
 if [ "$1" == "test" ]; then
     go test ./...
+    golangci-lint run -c lint.yaml
     exit 0
 fi
 
