@@ -200,7 +200,7 @@ func (es Tests) Insert(ctx context.Context, insertOptions ...InsertOption) (err 
 
 	_, err = dbExecutor.Exec(ctx, sql, args...)
 	if err != nil {
-		err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
+		err = fmt.Errorf("insert into tests failed (rows=%d, args=%d): %w", len(es), len(args), err)
 	}
 
 	return
@@ -484,7 +484,7 @@ func (es Tests) Delete(ctx context.Context) (err error) {
 	sql = sql + strings.Join(rowsSql, " OR ")
 	_, err = dbExecutor.Exec(ctx, sql, args...)
 	if err != nil {
-		err = fmt.Errorf("Delete query '%s' failed: %+v", sql, err)
+		err = fmt.Errorf("delete from tests failed (rows=%d, args=%d): %w", len(es), len(args), err)
 	}
 
 	return
