@@ -175,7 +175,7 @@ func (es {{ .GoName }}s) Insert(ctx context.Context, insertOptions ...InsertOpti
 
 	_, err = dbExecutor.Exec(ctx, sql, args...)
     if err != nil {
-        err = fmt.Errorf("Insert query '%s' failed: %+v", sql, err)
+        err = fmt.Errorf("insert into {{ .SQLName }} failed (rows=%d, args=%d): %w", len(es), len(args), err)
     }
 
 	return
