@@ -1,4 +1,3 @@
-
 func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interface{}) (entities {{ .GoName }}s, err error) {
     return {{ .GoName }}{}.Query(
         ctx,
@@ -9,8 +8,8 @@ func ({{ .GoName }}) Find(ctx context.Context, condition string, values []interf
     )
 }
 
-func ({{ .GoName }}) FindCh(ctx context.Context, condition string, values []interface{}) <-chan {{ .GoName }}OrErr {
-    return {{ .GoName }}{}.QueryCh(
+func ({{ .GoName }}) FindSeq(ctx context.Context, condition string, values []interface{}) iter.Seq2[*{{ .GoName }}, error] {
+    return {{ .GoName }}{}.QuerySeq(
         ctx,
         `SELECT {{ range $i, $f := .Fields }}{{ if $i }}, {{ end }}{{ $f.SQLName }}{{ end }}
 	    FROM "{{ .SQLName }}"
@@ -21,18 +20,21 @@ func ({{ .GoName }}) FindCh(ctx context.Context, condition string, values []inte
 
 func ({{ .GoName }}) Query(ctx context.Context, sql string, values []interface{}) (entities {{ .GoName }}s, err error) {
 
-    {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, func(ent *{{ .GoName }}, e error) {
+    {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, func(ent *{{ .GoName }}, e error) bool {
         if e != nil {
             err = e
         } else if ent != nil {
             entities = append(entities, ent)
         }
+        return true
     })
 
     return
 }
 
-func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values []interface{}, cb func(*{{ .GoName }}, error)) {
+// doQueryWithRowsCB calls cb for every fetched row and once more with an error if one occurred.
+// cb returning false stops fetching: rows are closed and no error is reported.
+func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values []interface{}, cb func(*{{ .GoName }}, error) bool) {
     dbExecutor := fromContext(ctx)
 
     var rows pgx.Rows
@@ -42,8 +44,12 @@ func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values [
         sql,
         values...
     )
+    stopped := false
     defer func(){
         rows.Close()
+        if stopped {
+            return
+        }
         if err == nil {
             err = rows.Err()
         }
@@ -89,34 +95,27 @@ func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values [
         {{- end }}
 
 
-        cb(&e, nil)
+        if !cb(&e, nil) {
+            stopped = true
+            return
+        }
 	}
 }
 
-func ({{ .GoName }}) QueryCh(ctx context.Context, sql string, values []interface{}) <-chan {{ .GoName }}OrErr {
-    ch := make(chan {{ .GoName }}OrErr)
-
-    go func() {
-        defer close(ch) // the owner closes the channel regardless of the query result
-
-        {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, func(ent *{{ .GoName }}, err error) {
-            if err != nil {
-                ch <- {{ .GoName }}OrErr{Err: err}
-            } else if ent != nil {
-                ch <- {{ .GoName }}OrErr{Entity: ent}
-            }
-        })
-    }()
-
-    return ch
+// QuerySeq yields fetched rows one by one; on failure it yields a nil entity with an error and stops.
+// The query runs in the caller's goroutine; breaking out of the loop closes the rows.
+func ({{ .GoName }}) QuerySeq(ctx context.Context, sql string, values []interface{}) iter.Seq2[*{{ .GoName }}, error] {
+    return func(yield func(*{{ .GoName }}, error) bool) {
+        {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, yield)
+    }
 }
 
 func (e {{ .GoName }}) GetAll(ctx context.Context) ({{ .GoName }}s, error) {
 	return e.Find(ctx, "1=1", []any{})
 }
 
-func (e {{ .GoName }}) GetAllCh(ctx context.Context) <-chan {{ .GoName }}OrErr {
-	return e.FindCh(ctx, "1=1", []any{})
+func (e {{ .GoName }}) GetAllSeq(ctx context.Context) iter.Seq2[*{{ .GoName }}, error] {
+	return e.FindSeq(ctx, "1=1", []any{})
 }
 
 {{ if len .UniqIndexes -}}
@@ -166,40 +165,25 @@ func (e {{ .GoName }}) GetAllCh(ctx context.Context) <-chan {{ .GoName }}OrErr {
         func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) ({{ $entityGoName }}s, error) {
             {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
             if len({{ $firstParam }}) > chunkSize {
-                return nil, fmt.Errorf("too many items in {{ $firstParam }} (%d), please use MultiGetBy{{ snake_case_to_camel_case $n true }}Ch instead", len({{ $firstParam }}))
+                return nil, fmt.Errorf("too many items in {{ $firstParam }} (%d), please use MultiGetBy{{ snake_case_to_camel_case $n true }}Seq instead", len({{ $firstParam }}))
             }
             sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
             return e.Find(ctx, sql, params)
         }
 
-        func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) <-chan {{ $entityGoName }}OrErr {
+        // MultiGetBy{{ snake_case_to_camel_case $n true }}Seq fetches by chunks of chunkSize keys, so any number of keys is allowed.
+        func (e {{ $entityGoName }}) MultiGetBy{{ snake_case_to_camel_case $n true }}Seq(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} []{{ $f.GoType }}{{ end }}) iter.Seq2[*{{ $entityGoName }}, error] {
             {{- $firstParam := snake_case_to_camel_case (index $idx 0).SQLName false }}
-            if len({{ $firstParam }}) > chunkSize {
-                ch := make(chan {{ $entityGoName }}OrErr)
-
-                go func(){
-                    defer close(ch)
-
-                    for offset := 0; offset < len({{ $firstParam }}); offset += chunkSize {
-                        limit := offset + chunkSize
-                        if limit > len({{ $firstParam }}) {
-                            limit = len({{ $firstParam }})
-                        }
-
-                        sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[offset:limit]{{ end }})
-                        for res := range e.FindCh(ctx, sql, params) {
-                            ch <- res
-                            if res.Err != nil {
-                                return
-                            }
+            return func(yield func(*{{ $entityGoName }}, error) bool) {
+                for offset := 0; offset < len({{ $firstParam }}); offset += chunkSize {
+                    limit := min(offset + chunkSize, len({{ $firstParam }}))
+                    sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[offset:limit]{{ end }})
+                    for ent, err := range e.FindSeq(ctx, sql, params) {
+                        if !yield(ent, err) || err != nil {
+                            return
                         }
                     }
-                }()
-
-                return ch
-            } else {
-                sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }})
-                return e.FindCh(ctx, sql, params)
+                }
             }
         }
 	{{- end }}
@@ -215,8 +199,8 @@ func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}(ctx con
 	)
 }
 
-func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}Ch(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) <-chan {{ $entityGoName }}OrErr {
-	return e.FindCh(
+func (e {{ $entityGoName }}) GetBy{{ snake_case_to_camel_case $n true }}Seq(ctx context.Context, {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }} {{ $f.GoType }}{{ end }}) iter.Seq2[*{{ $entityGoName }}, error] {
+	return e.FindSeq(
 		ctx,
 		"{{ range $i, $f := $idx }}{{ if $i }} AND {{ end }}{{ $f.SQLName }} = ${{ add 1 $i }}{{ end }}",
 		[]any{ {{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}{{ end }} },

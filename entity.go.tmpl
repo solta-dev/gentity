@@ -18,11 +18,6 @@
 
 type {{ .GoName }}s []*{{ .GoName }}
 
-type {{ .GoName }}OrErr struct {
-    Entity *{{ .GoName }}
-    Err error
-}
-
 {{ template "routines_create.go.tmpl" . }}
 
 {{ template "routines_read.go.tmpl" . }}

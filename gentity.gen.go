@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"iter"
 	"strings"
 
 	"encoding/json"
@@ -57,11 +58,6 @@ func fromContext(ctx context.Context) DBExecutor {
  ********************************/
 
 type Tests []*Test
-
-type TestOrErr struct {
-	Entity *Test
-	Err    error
-}
 
 func (e *Test) Insert(ctx context.Context, insertOptions ...InsertOption) (err error) {
 	dbExecutor := fromContext(ctx)
@@ -216,8 +212,8 @@ func (Test) Find(ctx context.Context, condition string, values []interface{}) (e
 	)
 }
 
-func (Test) FindCh(ctx context.Context, condition string, values []interface{}) <-chan TestOrErr {
-	return Test{}.QueryCh(
+func (Test) FindSeq(ctx context.Context, condition string, values []interface{}) iter.Seq2[*Test, error] {
+	return Test{}.QuerySeq(
 		ctx,
 		`SELECT id, int_a, int_b, str_a, time_a, json
 	    FROM "tests"
@@ -228,18 +224,21 @@ func (Test) FindCh(ctx context.Context, condition string, values []interface{}) 
 
 func (Test) Query(ctx context.Context, sql string, values []interface{}) (entities Tests, err error) {
 
-	Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, e error) {
+	Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, e error) bool {
 		if e != nil {
 			err = e
 		} else if ent != nil {
 			entities = append(entities, ent)
 		}
+		return true
 	})
 
 	return
 }
 
-func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interface{}, cb func(*Test, error)) {
+// doQueryWithRowsCB calls cb for every fetched row and once more with an error if one occurred.
+// cb returning false stops fetching: rows are closed and no error is reported.
+func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interface{}, cb func(*Test, error) bool) {
 	dbExecutor := fromContext(ctx)
 
 	var rows pgx.Rows
@@ -249,8 +248,12 @@ func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interfac
 		sql,
 		values...,
 	)
+	stopped := false
 	defer func() {
 		rows.Close()
+		if stopped {
+			return
+		}
 		if err == nil {
 			err = rows.Err()
 		}
@@ -282,34 +285,27 @@ func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interfac
 			return
 		}
 
-		cb(&e, nil)
+		if !cb(&e, nil) {
+			stopped = true
+			return
+		}
 	}
 }
 
-func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) <-chan TestOrErr {
-	ch := make(chan TestOrErr)
-
-	go func() {
-		defer close(ch) // the owner closes the channel regardless of the query result
-
-		Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, err error) {
-			if err != nil {
-				ch <- TestOrErr{Err: err}
-			} else if ent != nil {
-				ch <- TestOrErr{Entity: ent}
-			}
-		})
-	}()
-
-	return ch
+// QuerySeq yields fetched rows one by one; on failure it yields a nil entity with an error and stops.
+// The query runs in the caller's goroutine; breaking out of the loop closes the rows.
+func (Test) QuerySeq(ctx context.Context, sql string, values []interface{}) iter.Seq2[*Test, error] {
+	return func(yield func(*Test, error) bool) {
+		Test{}.doQueryWithRowsCB(ctx, sql, values, yield)
+	}
 }
 
 func (e Test) GetAll(ctx context.Context) (Tests, error) {
 	return e.Find(ctx, "1=1", []any{})
 }
 
-func (e Test) GetAllCh(ctx context.Context) <-chan TestOrErr {
-	return e.FindCh(ctx, "1=1", []any{})
+func (e Test) GetAllSeq(ctx context.Context) iter.Seq2[*Test, error] {
+	return e.FindSeq(ctx, "1=1", []any{})
 }
 
 func (e Test) GetByPrimary(ctx context.Context, id uint64) (*Test, error) {
@@ -332,39 +328,24 @@ func (e Test) genFindQuery4MultiGetByPrimary(id []uint64) (sql string, params []
 
 func (e Test) MultiGetByPrimary(ctx context.Context, id []uint64) (Tests, error) {
 	if len(id) > chunkSize {
-		return nil, fmt.Errorf("too many items in id (%d), please use MultiGetByPrimaryCh instead", len(id))
+		return nil, fmt.Errorf("too many items in id (%d), please use MultiGetByPrimarySeq instead", len(id))
 	}
 	sql, params := e.genFindQuery4MultiGetByPrimary(id)
 	return e.Find(ctx, sql, params)
 }
 
-func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64) <-chan TestOrErr {
-	if len(id) > chunkSize {
-		ch := make(chan TestOrErr)
-
-		go func() {
-			defer close(ch)
-
-			for offset := 0; offset < len(id); offset += chunkSize {
-				limit := offset + chunkSize
-				if limit > len(id) {
-					limit = len(id)
-				}
-
-				sql, params := e.genFindQuery4MultiGetByPrimary(id[offset:limit])
-				for res := range e.FindCh(ctx, sql, params) {
-					ch <- res
-					if res.Err != nil {
-						return
-					}
+// MultiGetByPrimarySeq fetches by chunks of chunkSize keys, so any number of keys is allowed.
+func (e Test) MultiGetByPrimarySeq(ctx context.Context, id []uint64) iter.Seq2[*Test, error] {
+	return func(yield func(*Test, error) bool) {
+		for offset := 0; offset < len(id); offset += chunkSize {
+			limit := min(offset+chunkSize, len(id))
+			sql, params := e.genFindQuery4MultiGetByPrimary(id[offset:limit])
+			for ent, err := range e.FindSeq(ctx, sql, params) {
+				if !yield(ent, err) || err != nil {
+					return
 				}
 			}
-		}()
-
-		return ch
-	} else {
-		sql, params := e.genFindQuery4MultiGetByPrimary(id)
-		return e.FindCh(ctx, sql, params)
+		}
 	}
 }
 func (e Test) GetByTestStrA(ctx context.Context, strA string) (*Test, error) {
@@ -387,39 +368,24 @@ func (e Test) genFindQuery4MultiGetByTestStrA(strA []string) (sql string, params
 
 func (e Test) MultiGetByTestStrA(ctx context.Context, strA []string) (Tests, error) {
 	if len(strA) > chunkSize {
-		return nil, fmt.Errorf("too many items in strA (%d), please use MultiGetByTestStrACh instead", len(strA))
+		return nil, fmt.Errorf("too many items in strA (%d), please use MultiGetByTestStrASeq instead", len(strA))
 	}
 	sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
 	return e.Find(ctx, sql, params)
 }
 
-func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string) <-chan TestOrErr {
-	if len(strA) > chunkSize {
-		ch := make(chan TestOrErr)
-
-		go func() {
-			defer close(ch)
-
-			for offset := 0; offset < len(strA); offset += chunkSize {
-				limit := offset + chunkSize
-				if limit > len(strA) {
-					limit = len(strA)
-				}
-
-				sql, params := e.genFindQuery4MultiGetByTestStrA(strA[offset:limit])
-				for res := range e.FindCh(ctx, sql, params) {
-					ch <- res
-					if res.Err != nil {
-						return
-					}
+// MultiGetByTestStrASeq fetches by chunks of chunkSize keys, so any number of keys is allowed.
+func (e Test) MultiGetByTestStrASeq(ctx context.Context, strA []string) iter.Seq2[*Test, error] {
+	return func(yield func(*Test, error) bool) {
+		for offset := 0; offset < len(strA); offset += chunkSize {
+			limit := min(offset+chunkSize, len(strA))
+			sql, params := e.genFindQuery4MultiGetByTestStrA(strA[offset:limit])
+			for ent, err := range e.FindSeq(ctx, sql, params) {
+				if !yield(ent, err) || err != nil {
+					return
 				}
 			}
-		}()
-
-		return ch
-	} else {
-		sql, params := e.genFindQuery4MultiGetByTestStrA(strA)
-		return e.FindCh(ctx, sql, params)
+		}
 	}
 }
 
@@ -431,8 +397,8 @@ func (e Test) GetByTestIntAIntB(ctx context.Context, intA int, intB SomeInts) (T
 	)
 }
 
-func (e Test) GetByTestIntAIntBCh(ctx context.Context, intA int, intB SomeInts) <-chan TestOrErr {
-	return e.FindCh(
+func (e Test) GetByTestIntAIntBSeq(ctx context.Context, intA int, intB SomeInts) iter.Seq2[*Test, error] {
+	return e.FindSeq(
 		ctx,
 		"int_a = $1 AND int_b = $2",
 		[]any{intA, intB},

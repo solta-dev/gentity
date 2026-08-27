@@ -15,7 +15,7 @@ Implemented methods with database calls via [github.com/jackc/pgx/v5](https://gi
 - [x] Fetch all rows of table
 - [x] Fetch row by all values of unique index
 - [x] Fetch rows by all values of non-unique index
-- [x] Fetch rows via channel
+- [x] Fetch rows via iterator (`iter.Seq2[*Entity, error]`), chunked by keys count for multi-get
 - [x] Json struct in field (excluding indexed fields)
 
 Update and Delete methods use primary key fields as arguments.
@@ -74,9 +74,9 @@ fmt.Println("Id of new item is ", e.ID)
 
 * ~~Tests~~
 * ~~Multi-row insert and delete~~
-* Use iterators instead of channels
-* Chunked queries by long arrays
-* Change interface to .All() and .One for get resultset instead of channel use (or not because of with channels we can use select{} for read results simultaneous with other jobs)
+* ~~Use iterators instead of channels~~
+* ~~Chunked queries by long arrays~~
+* Change interface to .All() and .One for get resultset
 * On conflict clause in multi row insert
 * Custom returns clause in multi row insert
 * Fetchers by begin of tree-indexes

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"iter"
 	"log"
 	"net"
 	"os"
@@ -181,18 +182,31 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
-	// Get all via channel
+	// Get all via iterator
 	es = []*Test{}
-	t.Log("Get all via channel")
-	esCh := Test{}.GetAllCh(ctx)
-	t.Log("Get all via channel 2")
-	for r := range esCh {
-		t.Logf("Get all via channel 3: %v", r)
-		if r.Err != nil {
-			t.Error(r.Err)
+	for ent, err := range (Test{}).GetAllSeq(ctx) {
+		if err != nil {
+			t.Error(err)
 		} else {
-			es = append(es, r.Entity)
+			es = append(es, ent)
 		}
+	}
+	if diff := deep.Equal(es, Tests{&e1, &e2, &e3}); diff != nil {
+		t.Error(diff)
+	}
+
+	// Break out of the iterator: rows must be closed, so the same connection serves the next query
+	for ent, err := range (Test{}).GetAllSeq(ctx) {
+		if err != nil {
+			t.Error(err)
+		}
+		if ent != nil {
+			break
+		}
+	}
+	es, err = Test{}.GetAll(ctx)
+	if err != nil {
+		t.Errorf("query after break from iterator failed: %v", err)
 	}
 	if diff := deep.Equal(es, Tests{&e1, &e2, &e3}); diff != nil {
 		t.Error(diff)
@@ -235,15 +249,10 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
-	// Get by non unique index via channel
-	e23 = []*Test{}
-	esCh = Test{}.GetByTestIntAIntBCh(ctx, 2, 2)
-	for r := range esCh {
-		if r.Err != nil {
-			t.Error(r.Err)
-		} else {
-			e23 = append(e23, r.Entity)
-		}
+	// Get by non unique index via iterator
+	e23, errs := drainSeq(Test{}.GetByTestIntAIntBSeq(ctx, 2, 2))
+	if len(errs) != 0 {
+		t.Error(errs)
 	}
 	if diff := deep.Equal(e23, Tests{&e2, &e3}); diff != nil {
 		t.Error(diff)
@@ -271,14 +280,9 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
-	e12 = []*Test{}
-	esCh = Test{}.MultiGetByPrimaryCh(ctx, []uint64{1, 2})
-	for r := range esCh {
-		if r.Err != nil {
-			t.Error(r.Err)
-		} else {
-			e12 = append(e12, r.Entity)
-		}
+	e12, errs = drainSeq(Test{}.MultiGetByPrimarySeq(ctx, []uint64{1, 2}))
+	if len(errs) != 0 {
+		t.Error(errs)
 	}
 	if e12[0].ID > e12[1].ID {
 		e12[0], e12[1] = e12[1], e12[0]
@@ -298,14 +302,9 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
-	e12 = []*Test{}
-	esCh = Test{}.MultiGetByTestStrACh(ctx, []string{"a", "b"})
-	for r := range esCh {
-		if r.Err != nil {
-			t.Error(r.Err)
-		} else {
-			e12 = append(e12, r.Entity)
-		}
+	e12, errs = drainSeq(Test{}.MultiGetByTestStrASeq(ctx, []string{"a", "b"}))
+	if len(errs) != 0 {
+		t.Error(errs)
 	}
 	if e12[0].ID > e12[1].ID {
 		e12[0], e12[1] = e12[1], e12[0]
@@ -411,7 +410,7 @@ func TestMain(t *testing.T) {
 		t.Error(diff)
 	}
 
-	// Multi get via channel with more than chunkSize ids: the channel must be closed after the last chunk
+	// Multi get via iterator with more than chunkSize ids: all chunks must be fetched
 	ids := make([]uint64, 0, chunkSize+500)
 	for id := uint64(1); id <= chunkSize+500; id++ {
 		ids = append(ids, id)
@@ -420,23 +419,23 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	chunked, errs := drainCh(t, Test{}.MultiGetByPrimaryCh(ctx, ids))
+	chunked, errs := drainSeq(Test{}.MultiGetByPrimarySeq(ctx, ids))
 	if len(errs) != 0 {
-		t.Errorf("unexpected errors from MultiGetByPrimaryCh: %+v", errs)
+		t.Errorf("unexpected errors from MultiGetByPrimarySeq: %+v", errs)
 	}
 	if len(chunked) != len(es) {
-		t.Errorf("MultiGetByPrimaryCh returned %d entities, GetAll returned %d", len(chunked), len(es))
+		t.Errorf("MultiGetByPrimarySeq returned %d entities, GetAll returned %d", len(chunked), len(es))
 	}
 
-	// Error in the middle of the stream: the channel must deliver exactly one error and then be closed
+	// Error in the middle of the stream: the iterator must yield exactly one error and then stop
 	if _, err = pgConn.Exec(ctx, `UPDATE tests SET json = '"not an object"'::jsonb WHERE id = 35`); err != nil {
 		t.Fatal(err)
 	}
-	if _, errs = drainCh(t, Test{}.GetAllCh(ctx)); len(errs) != 1 {
-		t.Errorf("GetAllCh must return exactly one error, got %d: %+v", len(errs), errs)
+	if _, errs = drainSeq(Test{}.GetAllSeq(ctx)); len(errs) != 1 {
+		t.Errorf("GetAllSeq must yield exactly one error, got %d: %+v", len(errs), errs)
 	}
-	if _, errs = drainCh(t, Test{}.MultiGetByPrimaryCh(ctx, ids)); len(errs) != 1 {
-		t.Errorf("MultiGetByPrimaryCh must return exactly one error, got %d: %+v", len(errs), errs)
+	if _, errs = drainSeq(Test{}.MultiGetByPrimarySeq(ctx, ids)); len(errs) != 1 {
+		t.Errorf("MultiGetByPrimarySeq must yield exactly one error, got %d: %+v", len(errs), errs)
 	}
 	_, err = Test{}.GetAll(ctx)
 	if err == nil {
@@ -444,23 +443,14 @@ func TestMain(t *testing.T) {
 	}
 }
 
-// drainCh reads ch until it is closed; fails the test if the producer doesn't close it within the timeout.
-func drainCh(t *testing.T, ch <-chan TestOrErr) (es Tests, errs []error) {
-	t.Helper()
-	timeout := time.After(5 * time.Second)
-	for {
-		select {
-		case r, ok := <-ch:
-			if !ok {
-				return
-			}
-			if r.Err != nil {
-				errs = append(errs, r.Err)
-			} else {
-				es = append(es, r.Entity)
-			}
-		case <-timeout:
-			t.Fatal("channel was not closed within 5s")
+// drainSeq collects entities and errors yielded by seq.
+func drainSeq(seq iter.Seq2[*Test, error]) (es Tests, errs []error) {
+	for ent, err := range seq {
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			es = append(es, ent)
 		}
 	}
+	return
 }
