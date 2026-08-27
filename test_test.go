@@ -24,6 +24,8 @@ type tracerCtxVal string
 
 var tracerCtxKey = tracerCtxVal("pg_query_start_ts")
 
+const pgImage = "postgres:15"
+
 func (tracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	log.Printf("SQL: %s, args: %+v\n", data.SQL, data.Args)
 	return context.WithValue(ctx, tracerCtxKey, time.Now())
@@ -58,6 +60,18 @@ func TestMain(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Pull the image beforehand: otherwise `docker run` spends the connection-awaiting timeout on the download
+	pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer pullCancel()
+	t.Logf("pulling %s", pgImage)
+	pullStart := time.Now()
+	//nolint:gosec,G204 // no user input here
+	pullOut, err := exec.CommandContext(pullCtx, "docker", "pull", pgImage).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker pull %s failed after %s: %v\n%s", pgImage, time.Since(pullStart), err, pullOut)
+	}
+	t.Logf("pulled %s in %s:\n%s", pgImage, time.Since(pullStart), pullOut)
+
 	//nolint:gosec,G204 // no user input here
 	cmd := exec.CommandContext(ctx,
 		"docker", "run",
@@ -66,7 +80,7 @@ func TestMain(t *testing.T) {
 		"--env", "POSTGRES_DB=gentity",
 		"--memory", "100Mb", "--publish", fmt.Sprintf("%d:5432", pgPort),
 		"--rm",
-		"postgres:15",
+		pgImage,
 	)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -395,5 +409,58 @@ func TestMain(t *testing.T) {
 	}
 	if diff := deep.Equal(es, Tests{{ID: 35, IntA: 9, IntB: 9, StrA: "i", TimeA: t1}}); diff != nil {
 		t.Error(diff)
+	}
+
+	// Multi get via channel with more than chunkSize ids: the channel must be closed after the last chunk
+	ids := make([]uint64, 0, chunkSize+500)
+	for id := uint64(1); id <= chunkSize+500; id++ {
+		ids = append(ids, id)
+	}
+	es, err = Test{}.GetAll(ctx)
+	if err != nil {
+		t.Error(err)
+	}
+	chunked, errs := drainCh(t, Test{}.MultiGetByPrimaryCh(ctx, ids))
+	if len(errs) != 0 {
+		t.Errorf("unexpected errors from MultiGetByPrimaryCh: %+v", errs)
+	}
+	if len(chunked) != len(es) {
+		t.Errorf("MultiGetByPrimaryCh returned %d entities, GetAll returned %d", len(chunked), len(es))
+	}
+
+	// Error in the middle of the stream: the channel must deliver exactly one error and then be closed
+	if _, err = pgConn.Exec(ctx, `UPDATE tests SET json = '"not an object"'::jsonb WHERE id = 35`); err != nil {
+		t.Fatal(err)
+	}
+	if _, errs = drainCh(t, Test{}.GetAllCh(ctx)); len(errs) != 1 {
+		t.Errorf("GetAllCh must return exactly one error, got %d: %+v", len(errs), errs)
+	}
+	if _, errs = drainCh(t, Test{}.MultiGetByPrimaryCh(ctx, ids)); len(errs) != 1 {
+		t.Errorf("MultiGetByPrimaryCh must return exactly one error, got %d: %+v", len(errs), errs)
+	}
+	_, err = Test{}.GetAll(ctx)
+	if err == nil {
+		t.Error("GetAll must fail on a row with broken json")
+	}
+}
+
+// drainCh reads ch until it is closed; fails the test if the producer doesn't close it within the timeout.
+func drainCh(t *testing.T, ch <-chan TestOrErr) (es Tests, errs []error) {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case r, ok := <-ch:
+			if !ok {
+				return
+			}
+			if r.Err != nil {
+				errs = append(errs, r.Err)
+			} else {
+				es = append(es, r.Entity)
+			}
+		case <-timeout:
+			t.Fatal("channel was not closed within 5s")
+		}
 	}
 }

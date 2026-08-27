@@ -47,14 +47,13 @@ func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values [
         if err == nil {
             err = rows.Err()
         }
-        if err != nil {
-            if len(sql) > 500 {
-                sql = sql[:500] + "..."
-            }
-
-            err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
+        if err == nil {
+            return
         }
-        cb(nil, err) // call with nil,nil - is for empty result
+        if len(sql) > 500 {
+            sql = sql[:500] + "..."
+        }
+        cb(nil, fmt.Errorf("Query '%s' failed: %+v", sql, err))
     }()
 
     if err != nil {
@@ -84,7 +83,7 @@ func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values [
 
         {{ range $i, $f := .JsonFields -}}
             if err = json.Unmarshal({{ $f.GoName }}Buf, &e.{{ $f.GoName }}); err != nil {
-                cb(nil, fmt.Errorf("failed to unmarshal {{ $f.GoName }} field: %w", err))
+                err = fmt.Errorf("failed to unmarshal {{ $f.GoName }} field: %w", err)
                 return
             }
         {{- end }}
@@ -95,18 +94,20 @@ func ({{ .GoName }}) doQueryWithRowsCB(ctx context.Context, sql string, values [
 }
 
 func ({{ .GoName }}) QueryCh(ctx context.Context, sql string, values []interface{}) <-chan {{ .GoName }}OrErr {
-    var ch = make(chan {{ .GoName }}OrErr)
-    
-    go {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, func(ent *{{ .GoName }}, err error) {
-        if err != nil {
-            ch <- {{ .GoName }}OrErr{Err: err}
-        } else if ent != nil {
-            ch <- {{ .GoName }}OrErr{Entity: ent}
-        } else {
-			close(ch)
-        }
-    })
-    
+    ch := make(chan {{ .GoName }}OrErr)
+
+    go func() {
+        defer close(ch) // the owner closes the channel regardless of the query result
+
+        {{ .GoName }}{}.doQueryWithRowsCB(ctx, sql, values, func(ent *{{ .GoName }}, err error) {
+            if err != nil {
+                ch <- {{ .GoName }}OrErr{Err: err}
+            } else if ent != nil {
+                ch <- {{ .GoName }}OrErr{Entity: ent}
+            }
+        })
+    }()
+
     return ch
 }
 
@@ -177,6 +178,8 @@ func (e {{ .GoName }}) GetAllCh(ctx context.Context) <-chan {{ .GoName }}OrErr {
                 ch := make(chan {{ $entityGoName }}OrErr)
 
                 go func(){
+                    defer close(ch)
+
                     for offset := 0; offset < len({{ $firstParam }}); offset += chunkSize {
                         limit := offset + chunkSize
                         if limit > len({{ $firstParam }}) {
@@ -184,12 +187,10 @@ func (e {{ .GoName }}) GetAllCh(ctx context.Context) <-chan {{ .GoName }}OrErr {
                         }
 
                         sql, params := e.genFindQuery4MultiGetBy{{ snake_case_to_camel_case $n true }}({{ range $i, $f := $idx }}{{ if $i }}, {{ end }}{{ snake_case_to_camel_case $f.SQLName false }}[offset:limit]{{ end }})
-                        resCh := e.FindCh(ctx, sql, params)
-                        for res := range resCh {
+                        for res := range e.FindCh(ctx, sql, params) {
                             ch <- res
                             if res.Err != nil {
-                                close(ch)
-                                break
+                                return
                             }
                         }
                     }

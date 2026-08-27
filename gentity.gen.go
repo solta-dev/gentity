@@ -254,14 +254,13 @@ func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interfac
 		if err == nil {
 			err = rows.Err()
 		}
-		if err != nil {
-			if len(sql) > 500 {
-				sql = sql[:500] + "..."
-			}
-
-			err = fmt.Errorf("Query '%s' failed: %+v", sql, err)
+		if err == nil {
+			return
 		}
-		cb(nil, err) // call with nil,nil - is for empty result
+		if len(sql) > 500 {
+			sql = sql[:500] + "..."
+		}
+		cb(nil, fmt.Errorf("Query '%s' failed: %+v", sql, err))
 	}()
 
 	if err != nil {
@@ -279,7 +278,7 @@ func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interfac
 		}
 
 		if err = json.Unmarshal(JsonBuf, &e.Json); err != nil {
-			cb(nil, fmt.Errorf("failed to unmarshal Json field: %w", err))
+			err = fmt.Errorf("failed to unmarshal Json field: %w", err)
 			return
 		}
 
@@ -288,17 +287,19 @@ func (Test) doQueryWithRowsCB(ctx context.Context, sql string, values []interfac
 }
 
 func (Test) QueryCh(ctx context.Context, sql string, values []interface{}) <-chan TestOrErr {
-	var ch = make(chan TestOrErr)
+	ch := make(chan TestOrErr)
 
-	go Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, err error) {
-		if err != nil {
-			ch <- TestOrErr{Err: err}
-		} else if ent != nil {
-			ch <- TestOrErr{Entity: ent}
-		} else {
-			close(ch)
-		}
-	})
+	go func() {
+		defer close(ch) // the owner closes the channel regardless of the query result
+
+		Test{}.doQueryWithRowsCB(ctx, sql, values, func(ent *Test, err error) {
+			if err != nil {
+				ch <- TestOrErr{Err: err}
+			} else if ent != nil {
+				ch <- TestOrErr{Entity: ent}
+			}
+		})
+	}()
 
 	return ch
 }
@@ -342,6 +343,8 @@ func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64) <-chan TestO
 		ch := make(chan TestOrErr)
 
 		go func() {
+			defer close(ch)
+
 			for offset := 0; offset < len(id); offset += chunkSize {
 				limit := offset + chunkSize
 				if limit > len(id) {
@@ -349,12 +352,10 @@ func (e Test) MultiGetByPrimaryCh(ctx context.Context, id []uint64) <-chan TestO
 				}
 
 				sql, params := e.genFindQuery4MultiGetByPrimary(id[offset:limit])
-				resCh := e.FindCh(ctx, sql, params)
-				for res := range resCh {
+				for res := range e.FindCh(ctx, sql, params) {
 					ch <- res
 					if res.Err != nil {
-						close(ch)
-						break
+						return
 					}
 				}
 			}
@@ -397,6 +398,8 @@ func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string) <-chan Te
 		ch := make(chan TestOrErr)
 
 		go func() {
+			defer close(ch)
+
 			for offset := 0; offset < len(strA); offset += chunkSize {
 				limit := offset + chunkSize
 				if limit > len(strA) {
@@ -404,12 +407,10 @@ func (e Test) MultiGetByTestStrACh(ctx context.Context, strA []string) <-chan Te
 				}
 
 				sql, params := e.genFindQuery4MultiGetByTestStrA(strA[offset:limit])
-				resCh := e.FindCh(ctx, sql, params)
-				for res := range resCh {
+				for res := range e.FindCh(ctx, sql, params) {
 					ch <- res
 					if res.Err != nil {
-						close(ch)
-						break
+						return
 					}
 				}
 			}
